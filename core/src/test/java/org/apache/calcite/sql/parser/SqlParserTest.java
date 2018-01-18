@@ -4210,8 +4210,17 @@ public class SqlParserTest {
         "(SUM(`SAL`) OVER (RANGE BETWEEN INTERVAL '1' SECOND FOLLOWING AND INTERVAL '5' DAY FOLLOWING))");
   }
 
+  public static void main(String[] args) throws SqlParseException {
+    try {
+      SqlParser parser = SqlParser.create("SUM(t1.amount)/COUNT(t1)");
+      SqlNode sqlNode = parser.parseExpression();
+    } catch (Throwable e) {
+      e.printStackTrace();
+    }
+  }
   @Test public void testElementFunc() {
-    checkExp("element(a)", "ELEMENT(`A`)");
+
+    checkExp("SUM(t1.amount)/COUNT(t1)", "ELEMENT(`A`)");
   }
 
   @Test public void testCardinalityFunc() {
