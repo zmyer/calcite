@@ -16,18 +16,28 @@
  */
 package org.apache.calcite.sql.validate;
 
+import org.apache.calcite.runtime.CalciteContextException;
+import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.parser.SqlParserPos;
+import org.apache.calcite.sql.test.DefaultSqlTestFactory;
+import org.apache.calcite.sql.test.SqlTesterImpl;
+
 import com.google.common.collect.Lists;
 
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 import static org.hamcrest.CoreMatchers.anyOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.fail;
 
 /**
  * Tests for {@link SqlValidatorUtil}.
@@ -48,14 +58,15 @@ public class SqlValidatorUtilTest {
     // Make sure each name is unique
     List<String> copyResultList  = new ArrayList<>(resultList.size());
     for (String result : resultList) {
-      copyResultList.add(result.toLowerCase());
+      copyResultList.add(result.toLowerCase(Locale.ROOT));
     }
 
     for (String result : resultList) {
-      assertThat(copyResultList.contains(result.toLowerCase()), is(true));
-      copyResultList.remove(result.toLowerCase());
+      final String lowerResult = result.toLowerCase(Locale.ROOT);
+      assertThat(copyResultList.contains(lowerResult), is(true));
+      copyResultList.remove(lowerResult);
       if (!caseSensitive) {
-        assertThat(copyResultList.contains(result.toLowerCase()), is(false));
+        assertThat(copyResultList.contains(lowerResult), is(false));
       }
     }
     assertThat(copyResultList.size(), is(0));
@@ -107,6 +118,26 @@ public class SqlValidatorUtilTest {
     checkChangedFieldList(nameList, resultList, false);
   }
 
+  @SuppressWarnings("resource")
+  @Test public void testCheckingDuplicatesWithCompoundIdentifiers() {
+    final List<SqlNode> newList = new ArrayList<>(2);
+    newList.add(new SqlIdentifier(Arrays.asList("f0", "c0"), SqlParserPos.ZERO));
+    newList.add(new SqlIdentifier(Arrays.asList("f0", "c0"), SqlParserPos.ZERO));
+    final SqlTesterImpl tester =
+        new SqlTesterImpl(DefaultSqlTestFactory.INSTANCE);
+    final SqlValidatorImpl validator =
+        (SqlValidatorImpl) tester.getValidator();
+    try {
+      SqlValidatorUtil.checkIdentifierListForDuplicates(newList,
+          validator.getValidationErrorFunction());
+      fail("expected exception");
+    } catch (CalciteContextException e) {
+      // ok
+    }
+    // should not throw
+    newList.set(1, new SqlIdentifier(Arrays.asList("f0", "c1"), SqlParserPos.ZERO));
+    SqlValidatorUtil.checkIdentifierListForDuplicates(newList, null);
+  }
 }
 
 // End SqlValidatorUtilTest.java

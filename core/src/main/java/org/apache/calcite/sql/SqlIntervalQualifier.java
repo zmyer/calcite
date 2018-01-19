@@ -43,7 +43,6 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * <p>INTERVAL qualifier is defined as follows:
  *
  * <blockquote><code>
- *
  * &lt;interval qualifier&gt; ::=<br>
  * &nbsp;&nbsp; &lt;start field&gt; TO &lt;end field&gt;<br>
  * &nbsp;&nbsp;| &lt;single datetime field&gt;<br>
@@ -71,7 +70,6 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * &lt;interval fractional seconds precision&gt; ::=
  * &lt;unsigned integer&gt;<br>
  * &lt;interval leading field precision&gt; ::= &lt;unsigned integer&gt;
- *
  * </code></blockquote>
  *
  * <p>Examples include:
@@ -82,7 +80,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * <li><code>INTERVAL '1 2:3:4' DAY(4) TO SECOND(4)</code></li>
  * </ul>
  *
- * An instance of this class is immutable.
+ * <p>An instance of this class is immutable.
  */
 public class SqlIntervalQualifier extends SqlNode {
   //~ Static fields/initializers ---------------------------------------------
@@ -248,7 +246,7 @@ public class SqlIntervalQualifier extends SqlNode {
     if (useDefaultFractionalSecondPrecision()) {
       return RelDataType.PRECISION_NOT_SPECIFIED;
     } else {
-      return startPrecision;
+      return fractionalSecondPrecision;
     }
   }
 
@@ -354,9 +352,10 @@ public class SqlIntervalQualifier extends SqlNode {
   }
 
   /**
-   * Does this interval have a single datetime field
+   * Returns whether this interval has a single datetime field.
    *
-   * Return true not of form unit TO unit.
+   * <p>Returns {@code true} if it is of the form {@code unit},
+   * {@code false} if it is of the form {@code unit TO unit}.
    */
   public boolean isSingleDatetimeField() {
     return timeUnitRange.endUnit == null;
@@ -369,7 +368,7 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * @return 1 or -1
    */
-  private int getIntervalSign(String value) {
+  public int getIntervalSign(String value) {
     int sign = 1; // positive until proven otherwise
 
     if (!Util.isNullOrEmpty(value)) {
@@ -414,7 +413,7 @@ public class SqlIntervalQualifier extends SqlNode {
   }
 
   private static final BigDecimal[] POWERS10 = {
-    ZERO,
+      ZERO,
     BigDecimal.valueOf(10),
     BigDecimal.valueOf(100),
     BigDecimal.valueOf(1000),
@@ -499,8 +498,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against a YEAR interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsYear(
       RelDataTypeSystem typeSystem, int sign,
@@ -534,8 +533,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against a YEAR TO MONTH interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsYearToMonth(
       RelDataTypeSystem typeSystem, int sign,
@@ -574,8 +573,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against a MONTH interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsMonth(
       RelDataTypeSystem typeSystem, int sign,
@@ -609,8 +608,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against a DAY interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsDay(
       RelDataTypeSystem typeSystem, int sign,
@@ -644,8 +643,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against a DAY TO HOUR interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsDayToHour(
       RelDataTypeSystem typeSystem, int sign,
@@ -684,8 +683,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against a DAY TO MINUTE interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsDayToMinute(
       RelDataTypeSystem typeSystem, int sign,
@@ -727,8 +726,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against a DAY TO SECOND interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsDayToSecond(
       RelDataTypeSystem typeSystem, int sign,
@@ -803,8 +802,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against an HOUR interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsHour(
       RelDataTypeSystem typeSystem, int sign,
@@ -839,8 +838,8 @@ public class SqlIntervalQualifier extends SqlNode {
    * Validates an INTERVAL literal against an HOUR TO MINUTE interval
    * qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsHourToMinute(
       RelDataTypeSystem typeSystem, int sign,
@@ -880,8 +879,8 @@ public class SqlIntervalQualifier extends SqlNode {
    * Validates an INTERVAL literal against an HOUR TO SECOND interval
    * qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsHourToSecond(
       RelDataTypeSystem typeSystem, int sign,
@@ -953,8 +952,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against an MINUTE interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsMinute(
       RelDataTypeSystem typeSystem, int sign,
@@ -989,8 +988,8 @@ public class SqlIntervalQualifier extends SqlNode {
    * Validates an INTERVAL literal against an MINUTE TO SECOND interval
    * qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsMinuteToSecond(
       RelDataTypeSystem typeSystem, int sign,
@@ -1058,8 +1057,8 @@ public class SqlIntervalQualifier extends SqlNode {
   /**
    * Validates an INTERVAL literal against an SECOND interval qualifier.
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   private int[] evaluateIntervalLiteralAsSecond(
       RelDataTypeSystem typeSystem,
@@ -1125,8 +1124,8 @@ public class SqlIntervalQualifier extends SqlNode {
    *
    * @return field values, never null
    *
-   * @throws org.apache.calcite.runtime.CalciteContextException
-   * if the interval value is illegal
+   * @throws org.apache.calcite.runtime.CalciteContextException if the interval
+   * value is illegal
    */
   public int[] evaluateIntervalLiteral(String value, SqlParserPos pos,
       RelDataTypeSystem typeSystem) {

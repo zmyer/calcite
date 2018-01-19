@@ -21,18 +21,19 @@ import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.plan.Context;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCostFactory;
-import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.plan.RelTraitDef;
 import org.apache.calcite.prepare.CalcitePrepareImpl;
 import org.apache.calcite.prepare.PlannerImpl;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
+import org.apache.calcite.rex.RexExecutor;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.server.CalciteServerStatement;
 import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql2rel.SqlRexConvertletTable;
+import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.sql2rel.StandardConvertletTable;
 import org.apache.calcite.util.Util;
 
@@ -64,7 +65,9 @@ public class Frameworks {
 
   /** Piece of code to be run in a context where a planner is available. The
    * planner is accessible from the {@code cluster} parameter, as are several
-   * other useful objects. */
+   * other useful objects.
+   *
+   * @param <R> result type */
   public interface PlannerAction<R> {
     R apply(RelOptCluster cluster, RelOptSchema relOptSchema,
         SchemaPlus rootSchema);
@@ -74,7 +77,9 @@ public class Frameworks {
    * available. The planner is accessible from the {@code cluster} parameter, as
    * are several other useful objects. The connection and
    * {@link org.apache.calcite.DataContext} are accessible from the
-   * statement. */
+   * statement.
+   *
+   * @param <R> result type */
   public abstract static class PrepareAction<R> {
     private final FrameworkConfig config;
     public PrepareAction() {
@@ -179,8 +184,10 @@ public class Frameworks {
     private ImmutableList<RelTraitDef> traitDefs;
     private SqlParser.Config parserConfig =
         SqlParser.Config.DEFAULT;
+    private SqlToRelConverter.Config sqlToRelConverterConfig =
+        SqlToRelConverter.Config.DEFAULT;
     private SchemaPlus defaultSchema;
-    private RelOptPlanner.Executor executor;
+    private RexExecutor executor;
     private RelOptCostFactory costFactory;
     private RelDataTypeSystem typeSystem = RelDataTypeSystem.DEFAULT;
 
@@ -188,8 +195,8 @@ public class Frameworks {
 
     public FrameworkConfig build() {
       return new StdFrameworkConfig(context, convertletTable, operatorTable,
-          programs, traitDefs, parserConfig, defaultSchema, costFactory,
-          typeSystem, executor);
+          programs, traitDefs, parserConfig, sqlToRelConverterConfig,
+          defaultSchema, costFactory, typeSystem, executor);
     }
 
     public ConfigBuilder context(Context c) {
@@ -197,7 +204,7 @@ public class Frameworks {
       return this;
     }
 
-    public ConfigBuilder executor(RelOptPlanner.Executor executor) {
+    public ConfigBuilder executor(RexExecutor executor) {
       Preconditions.checkNotNull(executor);
       this.executor = executor;
       return this;
@@ -230,6 +237,13 @@ public class Frameworks {
 
     public ConfigBuilder parserConfig(SqlParser.Config parserConfig) {
       this.parserConfig = Preconditions.checkNotNull(parserConfig);
+      return this;
+    }
+
+    public ConfigBuilder sqlToRelConverterConfig(
+        SqlToRelConverter.Config sqlToRelConverterConfig) {
+      this.sqlToRelConverterConfig =
+          Preconditions.checkNotNull(sqlToRelConverterConfig);
       return this;
     }
 
@@ -278,27 +292,30 @@ public class Frameworks {
     private final ImmutableList<Program> programs;
     private final ImmutableList<RelTraitDef> traitDefs;
     private final SqlParser.Config parserConfig;
+    private final SqlToRelConverter.Config sqlToRelConverterConfig;
     private final SchemaPlus defaultSchema;
     private final RelOptCostFactory costFactory;
     private final RelDataTypeSystem typeSystem;
-    private final RelOptPlanner.Executor executor;
+    private final RexExecutor executor;
 
-    public StdFrameworkConfig(Context context,
+    StdFrameworkConfig(Context context,
         SqlRexConvertletTable convertletTable,
         SqlOperatorTable operatorTable,
         ImmutableList<Program> programs,
         ImmutableList<RelTraitDef> traitDefs,
         SqlParser.Config parserConfig,
+        SqlToRelConverter.Config sqlToRelConverterConfig,
         SchemaPlus defaultSchema,
         RelOptCostFactory costFactory,
         RelDataTypeSystem typeSystem,
-        RelOptPlanner.Executor executor) {
+        RexExecutor executor) {
       this.context = context;
       this.convertletTable = convertletTable;
       this.operatorTable = operatorTable;
       this.programs = programs;
       this.traitDefs = traitDefs;
       this.parserConfig = parserConfig;
+      this.sqlToRelConverterConfig = sqlToRelConverterConfig;
       this.defaultSchema = defaultSchema;
       this.costFactory = costFactory;
       this.typeSystem = typeSystem;
@@ -309,11 +326,15 @@ public class Frameworks {
       return parserConfig;
     }
 
+    public SqlToRelConverter.Config getSqlToRelConverterConfig() {
+      return sqlToRelConverterConfig;
+    }
+
     public SchemaPlus getDefaultSchema() {
       return defaultSchema;
     }
 
-    public RelOptPlanner.Executor getExecutor() {
+    public RexExecutor getExecutor() {
       return executor;
     }
 

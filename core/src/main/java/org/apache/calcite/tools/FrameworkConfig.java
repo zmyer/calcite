@@ -18,13 +18,14 @@ package org.apache.calcite.tools;
 
 import org.apache.calcite.plan.Context;
 import org.apache.calcite.plan.RelOptCostFactory;
-import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelTraitDef;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
+import org.apache.calcite.rex.RexExecutor;
 import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql2rel.SqlRexConvertletTable;
+import org.apache.calcite.sql2rel.SqlToRelConverter;
 
 import com.google.common.collect.ImmutableList;
 
@@ -41,6 +42,11 @@ public interface FrameworkConfig {
   SqlParser.Config getParserConfig();
 
   /**
+   * The configuration of {@link SqlToRelConverter}.
+   */
+  SqlToRelConverter.Config getSqlToRelConverterConfig();
+
+  /**
    * Returns the default schema that should be checked before looking at the
    * root schema.  Returns null to only consult the root schema.
    */
@@ -49,7 +55,7 @@ public interface FrameworkConfig {
   /**
    * Returns the executor used to evaluate constant expressions.
    */
-  RelOptPlanner.Executor getExecutor();
+  RexExecutor getExecutor();
 
   /**
    * Returns a list of one or more programs used during the course of query

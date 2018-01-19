@@ -19,8 +19,10 @@ package org.apache.calcite.rel.metadata;
 import org.apache.calcite.linq4j.Linq4j;
 import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.linq4j.function.Predicate1;
+import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptPredicateList;
 import org.apache.calcite.plan.RelOptUtil;
+import org.apache.calcite.plan.Strong;
 import org.apache.calcite.plan.hep.HepRelVertex;
 import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
@@ -36,10 +38,12 @@ import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.core.Union;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
+import org.apache.calcite.rex.RexExecutor;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexPermuteInputsShuttle;
+import org.apache.calcite.rex.RexSimplify;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.sql.SqlKind;
@@ -162,11 +166,11 @@ public class RelMdPredicates
    * <li>For e.g. expression 'a + e = 9' below will not be pulled up because 'e'
    * is not in the projection list.
    *
-   * <pre>
+   * <blockquote><pre>
    * inputPullUpExprs:      {a &gt; 7, b + c &lt; 10, a + e = 9}
    * projectionExprs:       {a, b, c, e / 2}
    * projectionPullupExprs: {a &gt; 7, b + c &lt; 10}
-   * </pre>
+   * </pre></blockquote>
    *
    * </ol>
    */
@@ -194,10 +198,10 @@ public class RelMdPredicates
     // 'columnsMapped' construct a new predicate based on mapping.
     final ImmutableBitSet columnsMapped = columnsMappedBuilder.build();
     for (RexNode r : inputInfo.pulledUpPredicates) {
-      ImmutableBitSet rCols = RelOptUtil.InputFinder.bits(r);
-      if (columnsMapped.contains(rCols)) {
-        r = r.accept(new RexPermuteInputsShuttle(m, input));
-        projectPullUpPredicates.add(r);
+      RexNode r2 = projectPredicate(rexBuilder, input, r, columnsMapped);
+      if (!r2.isAlwaysTrue()) {
+        r2 = r2.accept(new RexPermuteInputsShuttle(m, input));
+        projectPullUpPredicates.add(r2);
       }
     }
 
@@ -217,7 +221,58 @@ public class RelMdPredicates
         projectPullUpPredicates.add(rexBuilder.makeCall(op, args));
       }
     }
-    return RelOptPredicateList.of(projectPullUpPredicates);
+    return RelOptPredicateList.of(rexBuilder, projectPullUpPredicates);
+  }
+
+  /** Converts a predicate on a particular set of columns into a predicate on
+   * a subset of those columns, weakening if necessary.
+   *
+   * <p>If not possible to simplify, returns {@code true}, which is the weakest
+   * possible predicate.
+   *
+   * <p>Examples:<ol>
+   * <li>The predicate {@code $7 = $9} on columns [7]
+   *     becomes {@code $7 is not null}
+   * <li>The predicate {@code $7 = $9 + $11} on columns [7, 9]
+   *     becomes {@code $7 is not null or $9 is not null}
+   * <li>The predicate {@code $7 = $9 and $9 = 5} on columns [7] becomes
+   *   {@code $7 = 5}
+   * <li>The predicate
+   *   {@code $7 = $9 and ($9 = $1 or $9 = $2) and $1 > 3 and $2 > 10}
+   *   on columns [7] becomes {@code $7 > 3}
+   * </ol>
+   *
+   * <p>We currently only handle examples 1 and 2.
+   *
+   * @param rexBuilder Rex builder
+   * @param input Input relational expression
+   * @param r Predicate expression
+   * @param columnsMapped Columns which the final predicate can reference
+   * @return Predicate expression narrowed to reference only certain columns
+   */
+  private RexNode projectPredicate(final RexBuilder rexBuilder, RelNode input,
+      RexNode r, ImmutableBitSet columnsMapped) {
+    ImmutableBitSet rCols = RelOptUtil.InputFinder.bits(r);
+    if (columnsMapped.contains(rCols)) {
+      // All required columns are present. No need to weaken.
+      return r;
+    }
+    if (columnsMapped.intersects(rCols)) {
+      final List<RexNode> list = new ArrayList<>();
+      for (int c : columnsMapped.intersect(rCols)) {
+        if (input.getRowType().getFieldList().get(c).getType().isNullable()
+            && Strong.isNull(r, ImmutableBitSet.of(c))) {
+          list.add(
+              rexBuilder.makeCall(SqlStdOperatorTable.IS_NOT_NULL,
+                  rexBuilder.makeInputRef(input, c)));
+        }
+      }
+      if (!list.isEmpty()) {
+        return RexUtil.composeDisjunction(rexBuilder, list);
+      }
+    }
+    // Cannot weaken to anything non-trivial
+    return rexBuilder.makeLiteral(true);
   }
 
   /**
@@ -225,12 +280,14 @@ public class RelMdPredicates
    */
   public RelOptPredicateList getPredicates(Filter filter, RelMetadataQuery mq) {
     final RelNode input = filter.getInput();
+    final RexBuilder rexBuilder = filter.getCluster().getRexBuilder();
     final RelOptPredicateList inputInfo = mq.getPulledUpPredicates(input);
 
     return Util.first(inputInfo, RelOptPredicateList.EMPTY)
-        .union(
-            RelOptPredicateList.of(
-                RelOptUtil.conjunctions(filter.getCondition())));
+        .union(rexBuilder,
+            RelOptPredicateList.of(rexBuilder,
+                RexUtil.retainDeterministic(
+                    RelOptUtil.conjunctions(filter.getCondition()))));
   }
 
   /** Infers predicates for a {@link org.apache.calcite.rel.core.SemiJoin}. */
@@ -275,14 +332,15 @@ public class RelMdPredicates
    * <p>Pulls up predicates that only contains references to columns in the
    * GroupSet. For e.g.
    *
-   * <pre>
+   * <blockquote><pre>
    * inputPullUpExprs : { a &gt; 7, b + c &lt; 10, a + e = 9}
    * groupSet         : { a, b}
    * pulledUpExprs    : { a &gt; 7}
-   * </pre>
+   * </pre></blockquote>
    */
   public RelOptPredicateList getPredicates(Aggregate agg, RelMetadataQuery mq) {
     final RelNode input = agg.getInput();
+    final RexBuilder rexBuilder = agg.getCluster().getRexBuilder();
     final RelOptPredicateList inputInfo = mq.getPulledUpPredicates(input);
     final List<RexNode> aggPullUpPredicates = new ArrayList<>();
 
@@ -309,7 +367,7 @@ public class RelMdPredicates
         aggPullUpPredicates.add(r);
       }
     }
-    return RelOptPredicateList.of(aggPullUpPredicates);
+    return RelOptPredicateList.of(rexBuilder, aggPullUpPredicates);
   }
 
   /**
@@ -358,11 +416,17 @@ public class RelMdPredicates
     }
 
     List<RexNode> preds = new ArrayList<>(finalPreds.values());
-    RexNode disjPred = RexUtil.simplifyOrs(rB, finalResidualPreds);
+    final RelOptCluster cluster = union.getCluster();
+    final RexExecutor executor =
+        Util.first(cluster.getPlanner().getExecutor(), RexUtil.EXECUTOR);
+    final RelOptPredicateList predicates = RelOptPredicateList.EMPTY;
+    final RexSimplify simplify =
+        new RexSimplify(rB, predicates, true, executor);
+    RexNode disjPred = simplify.simplifyOrs(finalResidualPreds);
     if (!disjPred.isAlwaysTrue()) {
       preds.add(disjPred);
     }
-    return RelOptPredicateList.of(preds);
+    return RelOptPredicateList.of(rB, preds);
   }
 
   /**
@@ -388,11 +452,12 @@ public class RelMdPredicates
     if (!Bug.CALCITE_1048_FIXED) {
       return RelOptPredicateList.EMPTY;
     }
+    final RexBuilder rexBuilder = r.getCluster().getRexBuilder();
     RelOptPredicateList list = null;
     for (RelNode r2 : r.getRels()) {
       RelOptPredicateList list2 = mq.getPulledUpPredicates(r2);
       if (list2 != null) {
-        list = list == null ? list2 : list.union(list2);
+        list = list == null ? list2 : list.union(rexBuilder, list2);
       }
     }
     return Util.first(list, RelOptPredicateList.EMPTY);
@@ -437,7 +502,7 @@ public class RelMdPredicates
     final RexNode leftChildPredicates;
     final RexNode rightChildPredicates;
 
-    public JoinConditionBasedPredicateInference(Join joinRel,
+    JoinConditionBasedPredicateInference(Join joinRel,
             RexNode lPreds, RexNode rPreds) {
       this(joinRel, joinRel instanceof SemiJoin, lPreds, rPreds);
     }
@@ -572,6 +637,7 @@ public class RelMdPredicates
         }
       }
 
+      final RexBuilder rexBuilder = joinRel.getCluster().getRexBuilder();
       switch (joinType) {
       case INNER:
         Iterable<RexNode> pulledUpPredicates;
@@ -583,17 +649,18 @@ public class RelMdPredicates
           pulledUpPredicates = Iterables.concat(
                 RelOptUtil.conjunctions(leftChildPredicates),
                 RelOptUtil.conjunctions(rightChildPredicates),
-                RelOptUtil.conjunctions(joinRel.getCondition()),
+                RexUtil.retainDeterministic(
+                  RelOptUtil.conjunctions(joinRel.getCondition())),
                 inferredPredicates);
         }
-        return RelOptPredicateList.of(pulledUpPredicates,
+        return RelOptPredicateList.of(rexBuilder, pulledUpPredicates,
           leftInferredPredicates, rightInferredPredicates);
       case LEFT:
-        return RelOptPredicateList.of(
+        return RelOptPredicateList.of(rexBuilder,
             RelOptUtil.conjunctions(leftChildPredicates),
             leftInferredPredicates, rightInferredPredicates);
       case RIGHT:
-        return RelOptPredicateList.of(
+        return RelOptPredicateList.of(rexBuilder,
             RelOptUtil.conjunctions(rightChildPredicates),
             inferredPredicates, EMPTY_LIST);
       default:
@@ -762,7 +829,9 @@ public class RelMdPredicates
           if (level == 0) {
             nextMapping = null;
           } else {
-            iterationIdx[level] = 0;
+            int tmp = columnSets[level].nextSetBit(0);
+            nextMapping.set(columns[level], tmp);
+            iterationIdx[level] = tmp + 1;
             computeNextMapping(level - 1);
           }
         } else {

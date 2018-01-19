@@ -26,7 +26,10 @@ limitations under the License.
 
 # Upcoming talks
 
-* 2016/09/12 <a href="http://flink-forward.org/program/sessions/">Flink Forward</a>, Berlin
+* 2017/10/30 [DataEngConf NYC](http://www.dataengconf.com/) (New York City, USA)
+  * [Don't optimize my queries, optimize my data!](http://www.dataengconf.com/dont-optimize-my-queries-optimize-my-data) (Julian Hyde)
+* 2017/11/14 [QCon](https://qconsf.com/) (San Francisco, USA)
+  * [AMA: SQL Over Streams, Ask the Experts](https://qconsf.com/sf2017/presentation/ama-sql-over-streams-ask-experts) (Julian Hyde)
 
 # Project Members
 
@@ -39,11 +42,11 @@ Name (Apache ID) | Github | Org | Role
 
 There are several mailing lists for Calcite:
 
-* [dev@calcite.apache.org](mailto:dev@calcite.apache.org) - Development discussions
+* [dev@calcite.apache.org](mailto:dev@calcite.apache.org) &mdash; Development discussions
   [[archive](https://mail-archives.apache.org/mod_mbox/calcite-dev/)]
-* [issues@calcite.apache.org](mailto:issues@calcite.apache.org) - Bug tracking
+* [issues@calcite.apache.org](mailto:issues@calcite.apache.org) &mdash; Bug tracking
   [[archive](https://mail-archives.apache.org/mod_mbox/calcite-issues/)]
-* [commits@calcite.apache.org](mailto:commits@calcite.apache.org) - Git tracking
+* [commits@calcite.apache.org](mailto:commits@calcite.apache.org) &mdash; Git tracking
   [[archive](https://mail-archives.apache.org/mod_mbox/calcite-commits/)]
 
 You can subscribe to the lists by sending email to

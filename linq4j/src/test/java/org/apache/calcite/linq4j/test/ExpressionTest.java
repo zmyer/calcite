@@ -31,8 +31,10 @@ import org.apache.calcite.linq4j.tree.MethodCallExpression;
 import org.apache.calcite.linq4j.tree.NewExpression;
 import org.apache.calcite.linq4j.tree.Node;
 import org.apache.calcite.linq4j.tree.ParameterExpression;
+import org.apache.calcite.linq4j.tree.Shuttle;
 import org.apache.calcite.linq4j.tree.Types;
-import org.apache.calcite.linq4j.tree.Visitor;
+
+import com.google.common.collect.ImmutableMap;
 
 import org.junit.Test;
 
@@ -44,10 +46,15 @@ import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeSet;
 
+import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
 
 /**
  * Unit test for {@link org.apache.calcite.linq4j.tree.Expression}
@@ -899,7 +906,7 @@ public class ExpressionTest {
     statements.add(Expressions.return_(null, eighteen));
     BlockStatement expression = statements.toBlock();
     assertEquals(expected, Expressions.toString(expression));
-    expression.accept(new Visitor());
+    expression.accept(new Shuttle());
   }
 
   @Test public void testBlockBuilder2() {
@@ -924,13 +931,13 @@ public class ExpressionTest {
                 "add",
                 element)));
     BlockStatement expression = statements.toBlock();
-    assertEquals(
-        "{\n"
-            + "  return new java.util.TreeSet(\n"
-            + "      (java.util.Comparator) null).add(null);\n"
-            + "}\n",
-        Expressions.toString(expression));
-    expression.accept(new Visitor());
+    final String expected = "{\n"
+        + "  final java.util.TreeSet treeSet = new java.util.TreeSet(\n"
+        + "    (java.util.Comparator) null);\n"
+        + "  return treeSet.add(null);\n"
+        + "}\n";
+    assertThat(Expressions.toString(expression), is(expected));
+    expression.accept(new Shuttle());
   }
 
   @Test public void testBlockBuilder3() {
@@ -978,20 +985,20 @@ public class ExpressionTest {
             + "  org.apache.calcite.linq4j.test.ExpressionTest.bar(1, _b, _c, _d, org.apache.calcite.linq4j.test.ExpressionTest.foo(_c));\n"
             + "}\n",
         Expressions.toString(expression));
-    expression.accept(new Visitor());
+    expression.accept(new Shuttle());
   }
 
   @Test public void testConstantExpression() {
     final Expression constant = Expressions.constant(
         new Object[] {
-          1,
-          new Object[] {
-            (byte) 1, (short) 2, (int) 3, (long) 4,
-            (float) 5, (double) 6, (char) 7, true, "string", null
-          },
-          new AllType(true, (byte) 100, (char) 101, (short) 102, 103,
-              (long) 104, (float) 105, (double) 106, new BigDecimal(107),
-              new BigInteger("108"), "109", null)
+            1,
+            new Object[] {
+                (byte) 1, (short) 2, (int) 3, (long) 4,
+                (float) 5, (double) 6, (char) 7, true, "string", null
+            },
+            new AllType(true, (byte) 100, (char) 101, (short) 102, 103,
+                (long) 104, (float) 105, (double) 106, new BigDecimal(107),
+                new BigInteger("108"), "109", null)
         });
     assertEquals(
         "new Object[] {\n"
@@ -1021,7 +1028,7 @@ public class ExpressionTest {
             + "    \"109\",\n"
             + "    null)}",
         constant.toString());
-    constant.accept(new Visitor());
+    constant.accept(new Shuttle());
   }
 
   @Test public void testClassDecl() {
@@ -1056,7 +1063,7 @@ public class ExpressionTest {
             + "  int i;\n"
             + "}",
         Expressions.toString(newExpression));
-    newExpression.accept(new Visitor());
+    newExpression.accept(new Shuttle());
   }
 
   @Test public void testReturn() {
@@ -1195,6 +1202,66 @@ public class ExpressionTest {
             + "  }\n"
             + "}\n",
         Expressions.toString(builder.toBlock()));
+  }
+
+  @Test public void testEmptyListLiteral() throws Exception {
+    assertEquals("java.util.Collections.EMPTY_LIST",
+        Expressions.toString(Expressions.constant(Arrays.asList())));
+  }
+
+  @Test public void testEneElementListLiteral() throws Exception {
+    assertEquals("java.util.Arrays.asList(1)",
+        Expressions.toString(Expressions.constant(Arrays.asList(1))));
+  }
+
+  @Test public void testTwoElementListLiteral() throws Exception {
+    assertEquals("java.util.Arrays.asList(1,\n"
+            + "  2)",
+        Expressions.toString(Expressions.constant(Arrays.asList(1, 2))));
+  }
+
+  @Test public void testNestedListsLiteral() throws Exception {
+    assertEquals("java.util.Arrays.asList(java.util.Arrays.asList(1,\n"
+            + "    2),\n"
+            + "  java.util.Arrays.asList(3,\n"
+            + "    4))",
+        Expressions.toString(
+            Expressions.constant(
+                Arrays.asList(Arrays.asList(1, 2), Arrays.asList(3, 4)))));
+  }
+
+  @Test public void testEmptyMapLiteral() throws Exception {
+    assertEquals("com.google.common.collect.ImmutableMap.of()",
+        Expressions.toString(Expressions.constant(new HashMap())));
+  }
+
+  @Test public void testOneElementMapLiteral() throws Exception {
+    assertEquals("com.google.common.collect.ImmutableMap.of(\"abc\", 42)",
+        Expressions.toString(Expressions.constant(Collections.singletonMap("abc", 42))));
+  }
+
+  @Test public void testTwoElementMapLiteral() throws Exception {
+    assertEquals("com.google.common.collect.ImmutableMap.of(\"abc\", 42,\n"
+            + "\"def\", 43)",
+        Expressions.toString(Expressions.constant(ImmutableMap.of("abc", 42, "def", 43))));
+  }
+
+  @Test public void testTenElementMapLiteral() throws Exception {
+    Map<String, String> map = new LinkedHashMap<>(); // for consistent output
+    for (int i = 0; i < 10; i++) {
+      map.put("key_" + i, "value_" + i);
+    }
+    assertEquals("com.google.common.collect.ImmutableMap.builder().put(\"key_0\", \"value_0\")\n"
+            + ".put(\"key_1\", \"value_1\")\n"
+            + ".put(\"key_2\", \"value_2\")\n"
+            + ".put(\"key_3\", \"value_3\")\n"
+            + ".put(\"key_4\", \"value_4\")\n"
+            + ".put(\"key_5\", \"value_5\")\n"
+            + ".put(\"key_6\", \"value_6\")\n"
+            + ".put(\"key_7\", \"value_7\")\n"
+            + ".put(\"key_8\", \"value_8\")\n"
+            + ".put(\"key_9\", \"value_9\").build()",
+        Expressions.toString(Expressions.constant(map)));
   }
 
   /** An enum. */

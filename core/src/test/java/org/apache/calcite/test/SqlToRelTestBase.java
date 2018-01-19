@@ -30,6 +30,7 @@ import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelDistributions;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelReferentialConstraint;
 import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.logical.LogicalTableScan;
@@ -38,12 +39,14 @@ import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rex.RexBuilder;
+import org.apache.calcite.schema.ColumnStrategy;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.apache.calcite.sql.validate.SqlConformance;
+import org.apache.calcite.sql.validate.SqlConformanceEnum;
 import org.apache.calcite.sql.validate.SqlMonotonicity;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorCatalogReader;
@@ -54,9 +57,9 @@ import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.sql2rel.StandardConvertletTable;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.util.ImmutableBitSet;
-import org.apache.calcite.util.Util;
 
 import com.google.common.base.Function;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 
@@ -92,7 +95,8 @@ public abstract class SqlToRelTestBase {
   }
 
   protected Tester createTester() {
-    return new TesterImpl(getDiffRepos(), false, false, true, null, null);
+    return new TesterImpl(getDiffRepos(), false, false, true, false,
+        null, null);
   }
 
   /**
@@ -209,6 +213,10 @@ public abstract class SqlToRelTestBase {
     /** Returns a tester that optionally decorrelates queries. */
     Tester withDecorrelation(boolean enable);
 
+    /** Returns a tester that optionally decorrelates queries after planner
+     * rules have fired. */
+    Tester withLateDecorrelation(boolean enable);
+
     /** Returns a tester that optionally expands sub-queries.
      * If {@code expand} is false, the plan contains a
      * {@link org.apache.calcite.rex.RexSubQuery} for each sub-query.
@@ -220,6 +228,9 @@ public abstract class SqlToRelTestBase {
      * {@code SqlToRelConverter.Config}. */
     Tester withConfig(SqlToRelConverter.Config config);
 
+    /** Returns a tester with a {@link SqlConformance}. */
+    Tester withConformance(SqlConformance conformance);
+
     Tester withCatalogReaderFactory(
         Function<RelDataTypeFactory, Prepare.CatalogReader> factory);
 
@@ -227,6 +238,8 @@ public abstract class SqlToRelTestBase {
     Tester withTrim(boolean enable);
 
     Tester withClusterFactory(Function<RelOptCluster, RelOptCluster> function);
+
+    boolean isLateDecorrelate();
   }
 
   //~ Inner Classes ----------------------------------------------------------
@@ -246,7 +259,8 @@ public abstract class SqlToRelTestBase {
     }
 
     public RelOptTable getTableForMember(List<String> names) {
-      final SqlValidatorTable table = catalogReader.getTable(names);
+      final SqlValidatorTable table =
+          catalogReader.getTable(names);
       final RelDataType rowType = table.getRowType();
       final List<RelCollation> collationList = deduceMonotonicity(table);
       if (names.size() < 3) {
@@ -386,15 +400,24 @@ public abstract class SqlToRelTestBase {
         return false;
       }
 
+      public List<RelReferentialConstraint> getReferentialConstraints() {
+        return ImmutableList.of();
+      }
+
+      public List<ColumnStrategy> getColumnStrategies() {
+        throw new UnsupportedOperationException();
+      }
+
       public Expression getExpression(Class clazz) {
         return null;
       }
 
       public RelOptTable extend(List<RelDataTypeField> extendedFields) {
-        final RelDataType extendedRowType = typeFactory.builder()
-            .addAll(rowType.getFieldList())
-            .addAll(extendedFields)
-            .build();
+        final RelDataType extendedRowType =
+            getRelOptSchema().getTypeFactory().builder()
+                .addAll(rowType.getFieldList())
+                .addAll(extendedFields)
+                .build();
         return new MockColumnSet(names, extendedRowType, collationList);
       }
     }
@@ -404,7 +427,7 @@ public abstract class SqlToRelTestBase {
   private static class DelegatingRelOptTable implements RelOptTable {
     private final RelOptTable parent;
 
-    public DelegatingRelOptTable(RelOptTable parent) {
+    DelegatingRelOptTable(RelOptTable parent) {
       this.parent = parent;
     }
 
@@ -454,6 +477,14 @@ public abstract class SqlToRelTestBase {
     public boolean isKey(ImmutableBitSet columns) {
       return parent.isKey(columns);
     }
+
+    public List<RelReferentialConstraint> getReferentialConstraints() {
+      return parent.getReferentialConstraints();
+    }
+
+    public List<ColumnStrategy> getColumnStrategies() {
+      return parent.getColumnStrategies();
+    }
   }
 
   /**
@@ -465,10 +496,11 @@ public abstract class SqlToRelTestBase {
     private SqlOperatorTable opTab;
     private final DiffRepository diffRepos;
     private final boolean enableDecorrelate;
+    private final boolean enableLateDecorrelate;
     private final boolean enableTrim;
     private final boolean enableExpand;
-    private final Function<RelDataTypeFactory, Prepare.CatalogReader>
-    catalogReaderFactory;
+    private final SqlConformance conformance;
+    private final Function<RelDataTypeFactory, Prepare.CatalogReader> catalogReaderFactory;
     private final Function<RelOptCluster, RelOptCluster> clusterFactory;
     private RelDataTypeFactory typeFactory;
     public final SqlToRelConverter.Config config;
@@ -485,36 +517,45 @@ public abstract class SqlToRelTestBase {
      */
     protected TesterImpl(DiffRepository diffRepos, boolean enableDecorrelate,
         boolean enableTrim, boolean enableExpand,
+        boolean enableLateDecorrelate,
         Function<RelDataTypeFactory, Prepare.CatalogReader>
             catalogReaderFactory,
         Function<RelOptCluster, RelOptCluster> clusterFactory) {
       this(diffRepos, enableDecorrelate, enableTrim, enableExpand,
-          catalogReaderFactory, clusterFactory, SqlToRelConverter.Config.DEFAULT);
+          enableLateDecorrelate,
+          catalogReaderFactory,
+          clusterFactory,
+          SqlToRelConverter.Config.DEFAULT,
+          SqlConformanceEnum.DEFAULT);
     }
 
     protected TesterImpl(DiffRepository diffRepos, boolean enableDecorrelate,
-        boolean enableTrim, boolean enableExpand,
+        boolean enableTrim, boolean enableExpand, boolean enableLateDecorrelate,
         Function<RelDataTypeFactory, Prepare.CatalogReader>
             catalogReaderFactory,
         Function<RelOptCluster, RelOptCluster> clusterFactory,
-        SqlToRelConverter.Config config) {
+        SqlToRelConverter.Config config, SqlConformance conformance) {
       this.diffRepos = diffRepos;
       this.enableDecorrelate = enableDecorrelate;
       this.enableTrim = enableTrim;
       this.enableExpand = enableExpand;
+      this.enableLateDecorrelate = enableLateDecorrelate;
       this.catalogReaderFactory = catalogReaderFactory;
       this.clusterFactory = clusterFactory;
       this.config = config;
+      this.conformance = conformance;
     }
 
     public RelRoot convertSqlToRel(String sql) {
-      Util.pre(sql != null, "sql != null");
+      Preconditions.checkNotNull(sql);
       final SqlNode sqlQuery;
       final SqlToRelConverter.Config localConfig;
       try {
         sqlQuery = parseQuery(sql);
+      } catch (RuntimeException | Error e) {
+        throw e;
       } catch (Exception e) {
-        throw Util.newInternal(e); // todo: better handling
+        throw new RuntimeException(e);
       }
       final RelDataTypeFactory typeFactory = getTypeFactory();
       final Prepare.CatalogReader catalogReader =
@@ -591,7 +632,7 @@ public abstract class SqlToRelTestBase {
     }
 
     public SqlConformance getConformance() {
-      return SqlConformance.DEFAULT;
+      return conformance;
     }
 
     public SqlValidator createValidator(
@@ -688,50 +729,74 @@ public abstract class SqlToRelTestBase {
       return createValidator(catalogReader, typeFactory);
     }
 
-    public TesterImpl withDecorrelation(boolean enable) {
-      return this.enableDecorrelate == enable
+    public TesterImpl withDecorrelation(boolean enableDecorrelate) {
+      return this.enableDecorrelate == enableDecorrelate
           ? this
-          : new TesterImpl(diffRepos, enable, enableTrim, enableExpand,
-              catalogReaderFactory, clusterFactory);
+          : new TesterImpl(diffRepos, enableDecorrelate, enableTrim,
+              enableExpand, enableLateDecorrelate, catalogReaderFactory,
+              clusterFactory, config, conformance);
+    }
+
+    public Tester withLateDecorrelation(boolean enableLateDecorrelate) {
+      return this.enableLateDecorrelate == enableLateDecorrelate
+          ? this
+          : new TesterImpl(diffRepos, enableDecorrelate, enableTrim,
+              enableExpand, enableLateDecorrelate, catalogReaderFactory,
+              clusterFactory, config, conformance);
     }
 
     public TesterImpl withConfig(SqlToRelConverter.Config config) {
       return this.config == config
           ? this
           : new TesterImpl(diffRepos, enableDecorrelate, enableTrim,
-              enableExpand, catalogReaderFactory, clusterFactory, config);
+              enableExpand, enableLateDecorrelate, catalogReaderFactory,
+              clusterFactory, config, conformance);
     }
 
-    public Tester withTrim(boolean enable) {
-      return this.enableTrim == enable
+    public Tester withTrim(boolean enableTrim) {
+      return this.enableTrim == enableTrim
           ? this
-          : new TesterImpl(diffRepos, enableDecorrelate, enable, enableExpand,
-              catalogReaderFactory, clusterFactory);
+          : new TesterImpl(diffRepos, enableDecorrelate, enableTrim,
+              enableExpand, enableLateDecorrelate, catalogReaderFactory,
+              clusterFactory, config, conformance);
     }
 
-    public Tester withExpand(boolean expand) {
-      return this.enableExpand == expand
+    public Tester withExpand(boolean enableExpand) {
+      return this.enableExpand == enableExpand
           ? this
-          : new TesterImpl(diffRepos, enableDecorrelate, enableTrim, expand,
-              catalogReaderFactory, clusterFactory);
+          : new TesterImpl(diffRepos, enableDecorrelate, enableTrim,
+              enableExpand, enableLateDecorrelate, catalogReaderFactory,
+              clusterFactory, config, conformance);
+    }
+
+    public Tester withConformance(SqlConformance conformance) {
+      return new TesterImpl(diffRepos, enableDecorrelate, false,
+          enableExpand, enableLateDecorrelate, catalogReaderFactory,
+          clusterFactory, config, conformance);
     }
 
     public Tester withCatalogReaderFactory(
         Function<RelDataTypeFactory, Prepare.CatalogReader> factory) {
-      return new TesterImpl(diffRepos, enableDecorrelate, false, enableExpand,
-          factory, clusterFactory);
+      return new TesterImpl(diffRepos, enableDecorrelate, false,
+          enableExpand, enableLateDecorrelate, factory,
+          clusterFactory, config, conformance);
     }
 
     public Tester withClusterFactory(
         Function<RelOptCluster, RelOptCluster> clusterFactory) {
-      return new TesterImpl(diffRepos, enableDecorrelate, false, enableExpand,
-          catalogReaderFactory, clusterFactory);
+      return new TesterImpl(diffRepos, enableDecorrelate, false,
+          enableExpand, enableLateDecorrelate, catalogReaderFactory,
+          clusterFactory, config, conformance);
+    }
+
+    public boolean isLateDecorrelate() {
+      return enableLateDecorrelate;
     }
   }
 
     /** Validator for testing. */
   private static class FarragoTestValidator extends SqlValidatorImpl {
-    public FarragoTestValidator(
+    FarragoTestValidator(
         SqlOperatorTable opTab,
         SqlValidatorCatalogReader catalogReader,
         RelDataTypeFactory typeFactory,

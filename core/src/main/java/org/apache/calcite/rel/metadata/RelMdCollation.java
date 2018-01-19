@@ -26,6 +26,7 @@ import org.apache.calcite.rel.RelCollationTraitDef;
 import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.Calc;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.Project;
@@ -147,6 +148,11 @@ public class RelMdCollation
       RelMetadataQuery mq) {
     return ImmutableList.copyOf(
         project(mq, project.getInput(), project.getProjects()));
+  }
+
+  public ImmutableList<RelCollation> collations(Calc calc,
+      RelMetadataQuery mq) {
+    return ImmutableList.copyOf(calc(mq, calc.getInput(), calc.getProgram()));
   }
 
   public ImmutableList<RelCollation> collations(Values values,
@@ -335,16 +341,16 @@ public class RelMdCollation
     case ASCENDING:
       return new Ordering<List<RexLiteral>>() {
         public int compare(List<RexLiteral> o1, List<RexLiteral> o2) {
-          final Comparable c1 = o1.get(x).getValue();
-          final Comparable c2 = o2.get(x).getValue();
+          final Comparable c1 = o1.get(x).getValueAs(Comparable.class);
+          final Comparable c2 = o2.get(x).getValueAs(Comparable.class);
           return RelFieldCollation.compare(c1, c2, nullComparison);
         }
       };
     default:
       return new Ordering<List<RexLiteral>>() {
         public int compare(List<RexLiteral> o1, List<RexLiteral> o2) {
-          final Comparable c1 = o1.get(x).getValue();
-          final Comparable c2 = o2.get(x).getValue();
+          final Comparable c1 = o1.get(x).getValueAs(Comparable.class);
+          final Comparable c2 = o2.get(x).getValueAs(Comparable.class);
           return RelFieldCollation.compare(c2, c1, -nullComparison);
         }
       };

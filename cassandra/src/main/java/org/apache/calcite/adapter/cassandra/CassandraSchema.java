@@ -29,9 +29,9 @@ import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.schema.Table;
 import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.MaterializedViewTable;
-import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.SqlWriter;
+import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.pretty.SqlPrettyWriter;
@@ -70,6 +70,7 @@ public class CassandraSchema extends AbstractSchema {
   final String keyspace;
   private final SchemaPlus parentSchema;
   final String name;
+  final Hook.Closeable hook;
 
   protected static final Logger LOGGER = CalciteTrace.getPlannerTracer();
 
@@ -80,11 +81,31 @@ public class CassandraSchema extends AbstractSchema {
    * @param keyspace Cassandra keyspace name, e.g. "twissandra"
    */
   public CassandraSchema(String host, String keyspace, SchemaPlus parentSchema, String name) {
+    this(host, keyspace, null, null, parentSchema, name);
+  }
+
+  /**
+   * Creates a Cassandra schema.
+   *
+   * @param host Cassandra host, e.g. "localhost"
+   * @param keyspace Cassandra keyspace name, e.g. "twissandra"
+   * @param username Cassandra username
+   * @param password Cassandra password
+   */
+  public CassandraSchema(String host, String keyspace, String username, String password,
+        SchemaPlus parentSchema, String name) {
     super();
 
     this.keyspace = keyspace;
     try {
-      Cluster cluster = Cluster.builder().addContactPoint(host).build();
+      Cluster cluster;
+      if (username != null && password != null) {
+        cluster = Cluster.builder().addContactPoint(host)
+            .withCredentials(username, password).build();
+      } else {
+        cluster = Cluster.builder().addContactPoint(host).build();
+      }
+
       this.session = cluster.connect(keyspace);
     } catch (Exception e) {
       throw new RuntimeException(e);
@@ -92,7 +113,7 @@ public class CassandraSchema extends AbstractSchema {
     this.parentSchema = parentSchema;
     this.name = name;
 
-    Hook.TRIMMED.add(new Function<RelNode, Void>() {
+    this.hook = Hook.TRIMMED.add(new Function<RelNode, Void>() {
       public Void apply(RelNode node) {
         CassandraSchema.this.addMaterializedViews();
         return null;
@@ -113,7 +134,7 @@ public class CassandraSchema extends AbstractSchema {
     // proto-type will be copied into a real type factory.
     final RelDataTypeFactory typeFactory =
         new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
-    final RelDataTypeFactory.FieldInfoBuilder fieldInfo = typeFactory.builder();
+    final RelDataTypeFactory.Builder fieldInfo = typeFactory.builder();
     for (ColumnMetadata column : columns) {
       final String columnName = column.getName();
       final DataType type = column.getType();
@@ -189,7 +210,7 @@ public class CassandraSchema extends AbstractSchema {
     int i = 0;
     for (ClusteringOrder order : clusteringOrder) {
       RelFieldCollation.Direction direction;
-      switch(order) {
+      switch (order) {
       case DESC:
         direction = RelFieldCollation.Direction.DESCENDING;
         break;
@@ -208,6 +229,9 @@ public class CassandraSchema extends AbstractSchema {
   /** Add all materialized views defined in the schema to this column family
    */
   private void addMaterializedViews() {
+    // Close the hook use to get us here
+    hook.close();
+
     for (MaterializedViewMetadata view : getKeyspace().getMaterializedViews()) {
       String tableName = view.getBaseTable().getName();
       StringBuilder queryBuilder = new StringBuilder("SELECT ");
@@ -242,7 +266,7 @@ public class CassandraSchema extends AbstractSchema {
 
       StringWriter stringWriter = new StringWriter(query.length());
       PrintWriter printWriter = new PrintWriter(stringWriter);
-      SqlWriter writer = new SqlPrettyWriter(SqlDialect.CALCITE, true, printWriter);
+      SqlWriter writer = new SqlPrettyWriter(CalciteSqlDialect.DEFAULT, true, printWriter);
       parsedQuery.unparse(writer, 0, 0);
       query = stringWriter.toString();
 

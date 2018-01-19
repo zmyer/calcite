@@ -54,8 +54,9 @@ import org.apache.calcite.rel.stream.LogicalDelta;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.util.ControlFlowException;
 import org.apache.calcite.util.Pair;
+import org.apache.calcite.util.SaffronProperties;
+import org.apache.calcite.util.Util;
 
-import com.google.common.base.Throwables;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -106,14 +107,16 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
    * For the cache to be effective, providers should implement identity
    * correctly. */
   private static final LoadingCache<Key, MetadataHandler> HANDLERS =
-      CacheBuilder.newBuilder().build(
-          new CacheLoader<Key, MetadataHandler>() {
-            public MetadataHandler load(@Nonnull Key key) {
-              //noinspection unchecked
-              return load3(key.def, key.provider.handlers(key.def),
-                  key.relClasses);
-            }
-          });
+      maxSize(CacheBuilder.newBuilder(),
+          SaffronProperties.INSTANCE.metadataHandlerCacheMaximumSize().get())
+          .build(
+              new CacheLoader<Key, MetadataHandler>() {
+                public MetadataHandler load(@Nonnull Key key) {
+                  //noinspection unchecked
+                  return load3(key.def, key.provider.handlers(key.def),
+                      key.relClasses);
+                }
+              });
 
   // Pre-register the most common relational operators, to reduce the number of
   // times we re-generate.
@@ -168,6 +171,15 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
     return new JaninoRelMetadataProvider(provider);
   }
 
+  // helper for initialization
+  private static <K, V> CacheBuilder<K, V> maxSize(CacheBuilder<K, V> builder,
+      int size) {
+    if (size >= 0) {
+      builder.maximumSize(size);
+    }
+    return builder;
+  }
+
   @Override public boolean equals(Object obj) {
     return obj == this
         || obj instanceof JaninoRelMetadataProvider
@@ -184,13 +196,12 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
   }
 
   public <M extends Metadata> Multimap<Method, MetadataHandler<M>>
-  handlers(MetadataDef<M> def) {
+      handlers(MetadataDef<M> def) {
     return provider.handlers(def);
   }
 
-  private static <M extends Metadata>
-  MetadataHandler<M> load3(MetadataDef<M> def,
-      Multimap<Method, MetadataHandler<M>> map,
+  private static <M extends Metadata> MetadataHandler<M> load3(
+      MetadataDef<M> def, Multimap<Method, MetadataHandler<M>> map,
       ImmutableList<Class<? extends RelNode>> relClasses) {
     final StringBuilder buff = new StringBuilder();
     final String name =
@@ -228,7 +239,9 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
           .append(";\n");
     }
     buff.append("  }\n")
-        .append("  public org.apache.calcite.rel.metadata.MetadataDef getDef() {\n")
+        .append("  public ")
+        .append(MetadataDef.class.getName())
+        .append(" getDef() {\n")
         .append("    return ")
         .append(def.metadataClass.getName())
         .append(".DEF;\n")
@@ -239,8 +252,12 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
           .append(" ")
           .append(method.e.getName())
           .append("(\n")
-          .append("      org.apache.calcite.rel.RelNode r,\n")
-          .append("      org.apache.calcite.rel.metadata.RelMetadataQuery mq");
+          .append("      ")
+          .append(RelNode.class.getName())
+          .append(" r,\n")
+          .append("      ")
+          .append(RelMetadataQuery.class.getName())
+          .append(" mq");
       paramList(buff, method.e)
           .append(") {\n");
       buff.append("    final java.util.List key = ")
@@ -269,6 +286,11 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
           .append(CyclicMetadataException.class.getName())
           .append(".INSTANCE;\n")
           .append("      }\n")
+          .append("      if (v == ")
+          .append(NullSentinel.class.getName())
+          .append(".INSTANCE) {\n")
+          .append("        return null;\n")
+          .append("      }\n")
           .append("      return (")
           .append(method.e.getReturnType().getName())
           .append(") v;\n")
@@ -284,10 +306,12 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
           .append("_(r, mq");
       argList(buff, method.e)
           .append(");\n")
-          .append("      mq.map.put(key, x);\n")
+          .append("      mq.map.put(key, ")
+          .append(NullSentinel.class.getName())
+          .append(".mask(x));\n")
           .append("      return x;\n")
           .append("    } catch (")
-          .append(NoHandler.class.getName())
+          .append(Exception.class.getName())
           .append(" e) {\n")
           .append("      mq.map.remove(key);\n")
           .append("      throw e;\n")
@@ -299,8 +323,12 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
           .append(" ")
           .append(method.e.getName())
           .append("_(\n")
-          .append("      org.apache.calcite.rel.RelNode r,\n")
-          .append("      org.apache.calcite.rel.metadata.RelMetadataQuery mq");
+          .append("      ")
+          .append(RelNode.class.getName())
+          .append(" r,\n")
+          .append("      ")
+          .append(RelMetadataQuery.class.getName())
+          .append(" mq");
       paramList(buff, method.e)
           .append(") {\n");
       buff.append("    switch (relClasses.indexOf(r.getClass())) {\n");
@@ -357,13 +385,13 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
     try {
       return compile(decl, buff.toString(), def, argList);
     } catch (CompileException | IOException e) {
-      System.out.println(buff);
-      throw Throwables.propagate(e);
+      throw new RuntimeException("Error compiling:\n"
+          + buff, e);
     }
   }
 
-  private static String
-  findProvider(List<Pair<String, MetadataHandler>> providerList,
+  private static String findProvider(
+      List<Pair<String, MetadataHandler>> providerList,
       Class<?> declaringClass) {
     for (Pair<String, MetadataHandler> pair : providerList) {
       if (declaringClass.isInstance(pair.right)) {
@@ -407,8 +435,8 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
     return buff;
   }
 
-  static <M extends Metadata> MetadataHandler<M>
-  compile(ClassDeclaration expr, String s, MetadataDef<M> def,
+  static <M extends Metadata> MetadataHandler<M> compile(ClassDeclaration expr,
+      String s, MetadataDef<M> def,
       List<Object> argList) throws CompileException, IOException {
     final ICompilerFactory compilerFactory;
     try {
@@ -434,25 +462,26 @@ public class JaninoRelMetadataProvider implements RelMetadataProvider {
     } catch (InstantiationException
         | IllegalAccessException
         | InvocationTargetException e) {
-      throw Throwables.propagate(e);
+      throw new RuntimeException(e);
     }
     return def.handlerClass.cast(o);
   }
 
-  synchronized <M extends Metadata, H extends MetadataHandler<M>> H
-  create(MetadataDef<M> def) {
+  synchronized <M extends Metadata, H extends MetadataHandler<M>> H create(
+      MetadataDef<M> def) {
     try {
       final Key key = new Key((MetadataDef) def, provider,
           ImmutableList.copyOf(ALL_RELS));
       //noinspection unchecked
       return (H) HANDLERS.get(key);
     } catch (UncheckedExecutionException | ExecutionException e) {
-      throw Throwables.propagate(e.getCause());
+      Util.throwIfUnchecked(e.getCause());
+      throw new RuntimeException(e.getCause());
     }
   }
 
-  synchronized <M extends Metadata, H extends MetadataHandler<M>> H
-  revise(Class<? extends RelNode> rClass, MetadataDef<M> def) {
+  synchronized <M extends Metadata, H extends MetadataHandler<M>> H revise(
+      Class<? extends RelNode> rClass, MetadataDef<M> def) {
     if (ALL_RELS.add(rClass)) {
       HANDLERS.invalidateAll();
     }

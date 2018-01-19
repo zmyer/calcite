@@ -42,9 +42,8 @@ public class SqlCoalesceFunction extends SqlFunction {
     // rewriteCall to convert COALESCE into CASE early.  However,
     // validator rewrite can optionally be disabled, in which case these
     // strategies are used.
-    super(
-        "COALESCE",
-        SqlKind.OTHER_FUNCTION,
+    super("COALESCE",
+        SqlKind.COALESCE,
         ReturnTypes.LEAST_RESTRICTIVE,
         null,
         OperandTypes.SAME_VARIADIC,
@@ -71,17 +70,14 @@ public class SqlCoalesceFunction extends SqlFunction {
 
     // todo: optimize when know operand is not null.
 
-    for (int i = 0; (i + 1) < operands.size(); ++i) {
+    for (SqlNode operand : Util.skipLast(operands)) {
       whenList.add(
-          SqlStdOperatorTable.IS_NOT_NULL.createCall(
-              pos,
-              operands.get(i)));
-      thenList.add(operands.get(i).clone(operands.get(i).getParserPosition()));
+          SqlStdOperatorTable.IS_NOT_NULL.createCall(pos, operand));
+      thenList.add(SqlNode.clone(operand));
     }
     SqlNode elseExpr = Util.last(operands);
     assert call.getFunctionQuantifier() == null;
-    return SqlCase.createSwitched(
-        pos, null, whenList, thenList, elseExpr);
+    return SqlCase.createSwitched(pos, null, whenList, thenList, elseExpr);
   }
 }
 

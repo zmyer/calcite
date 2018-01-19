@@ -16,24 +16,25 @@
  */
 package org.apache.calcite.test;
 
-import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTraitDef;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Correlate;
-import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.Exchange;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.TableFunctionScan;
 import org.apache.calcite.rel.core.TableModify;
 import org.apache.calcite.rel.core.Window;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.calcite.rex.RexCorrelVariable;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.runtime.CalciteException;
 import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.sql.SqlMatchRecognize;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -41,18 +42,22 @@ import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.tools.Programs;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelRunners;
+import org.apache.calcite.util.Holder;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.mapping.Mappings;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
 
 import org.junit.Test;
 
 import java.sql.PreparedStatement;
 import java.util.Arrays;
 import java.util.List;
+import java.util.TreeSet;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
@@ -205,6 +210,20 @@ public class RelBuilderTest {
             .build();
     assertThat(str(root),
         is("LogicalTableScan(table=[[scott, EMP]])\n"));
+  }
+
+  @Test public void testScanFilterTriviallyFalse() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   WHERE 1 = 2
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .filter(builder.equals(builder.literal(1), builder.literal(2)))
+            .build();
+    assertThat(str(root),
+        is("LogicalValues(tuples=[[]])\n"));
   }
 
   @Test public void testScanFilterEquals() {
@@ -366,7 +385,7 @@ public class RelBuilderTest {
     // Note: AS(COMM, C) becomes just $6
     assertThat(str(root),
         is(
-            "LogicalProject(DEPTNO=[$7], COMM=[CAST($6):SMALLINT NOT NULL], $f2=[20], COMM3=[$6], C=[$6])\n"
+            "LogicalProject(DEPTNO=[$7], COMM=[CAST($6):SMALLINT NOT NULL], $f2=[20], COMM0=[$6], C=[$6])\n"
             + "  LogicalTableScan(table=[[scott, EMP]])\n"));
   }
 
@@ -399,7 +418,7 @@ public class RelBuilderTest {
         is("LogicalProject(DEPTNO=[$7], COMM=[CAST($6):SMALLINT NOT NULL],"
                 + " $f2=[OR(=($7, 20), AND(null, =($7, 10), IS NULL($6),"
                 + " IS NULL($7)), =($7, 30))], n2=[IS NULL($2)],"
-                + " nn2=[IS NOT NULL($3)], $f5=[20], COMM6=[$6], C=[$6])\n"
+                + " nn2=[IS NOT NULL($3)], $f5=[20], COMM0=[$6], C=[$6])\n"
                 + "  LogicalTableScan(table=[[scott, EMP]])\n"));
   }
 
@@ -428,7 +447,7 @@ public class RelBuilderTest {
             .project(builder.field("a"),
                 builder.field("t1", "c"))
             .build();
-    final String expected = "LogicalProject(DEPTNO=[$0], LOC=[$2])\n"
+    final String expected = "LogicalProject(a=[$0], c=[$2])\n"
         + "  LogicalTableScan(table=[[scott, DEPT]])\n";
     assertThat(str(root), is(expected));
   }
@@ -446,15 +465,18 @@ public class RelBuilderTest {
                 builder.call(SqlStdOperatorTable.EQUALS,
                     builder.field("a"),
                     builder.literal(20)))
-            .aggregate(builder.groupKey(0, 1, 2))
+            .aggregate(builder.groupKey(0, 1, 2),
+                builder.aggregateCall(SqlStdOperatorTable.SUM,
+                    false, false, null, null,
+                    builder.field(0)))
             .project(builder.field("c"),
                 builder.field("a"))
             .build();
-    final String expected = "LogicalProject(c=[$2], a=[$0])\n"
-        + "  LogicalAggregate(group=[{3, 4, 5}])\n"
-        + "    LogicalProject(DEPTNO=[$0], DNAME=[$1], LOC=[$2], a=[$0], b=[$1], c=[$2])\n"
-        + "      LogicalFilter(condition=[=($0, 20)])\n"
-        + "        LogicalTableScan(table=[[scott, DEPT]])\n";
+    final String expected = ""
+        + "LogicalProject(c=[$2], a=[$0])\n"
+        + "  LogicalAggregate(group=[{0, 1, 2}], agg#0=[SUM($0)])\n"
+        + "    LogicalFilter(condition=[=($0, 20)])\n"
+        + "      LogicalTableScan(table=[[scott, DEPT]])\n";
     assertThat(str(root), is(expected));
   }
 
@@ -467,6 +489,82 @@ public class RelBuilderTest {
     final String expected = "LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2])\n"
         + "  LogicalTableScan(table=[[scott, EMP]])\n";
     assertThat(str(root), is(expected));
+  }
+
+  @Test public void testRename() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+
+    // No rename necessary (null name is ignored)
+    RelNode root =
+        builder.scan("DEPT")
+            .rename(Arrays.asList("DEPTNO", null))
+            .build();
+    final String expected = "LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(str(root), is(expected));
+
+    // No rename necessary (prefix matches)
+    root =
+        builder.scan("DEPT")
+            .rename(ImmutableList.of("DEPTNO"))
+            .build();
+    assertThat(str(root), is(expected));
+
+    // Add project to rename fields
+    root =
+        builder.scan("DEPT")
+            .rename(Arrays.asList("NAME", null, "DEPTNO"))
+            .build();
+    final String expected2 = ""
+        + "LogicalProject(NAME=[$0], DNAME=[$1], DEPTNO=[$2])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(str(root), is(expected2));
+
+    // If our requested list has non-unique names, we might get the same field
+    // names we started with. Don't add a useless project.
+    root =
+        builder.scan("DEPT")
+            .rename(Arrays.asList("DEPTNO", null, "DEPTNO"))
+            .build();
+    final String expected3 = ""
+        + "LogicalProject(DEPTNO=[$0], DNAME=[$1], DEPTNO0=[$2])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(str(root), is(expected3));
+    root =
+        builder.scan("DEPT")
+            .rename(Arrays.asList("DEPTNO", null, "DEPTNO"))
+            .rename(Arrays.asList("DEPTNO", null, "DEPTNO"))
+            .build();
+    // No extra Project
+    assertThat(str(root), is(expected3));
+
+    // Name list too long
+    try {
+      root =
+          builder.scan("DEPT")
+              .rename(ImmutableList.of("NAME", "DEPTNO", "Y", "Z"))
+              .build();
+      fail("expected error, got " + root);
+    } catch (IllegalArgumentException e) {
+      assertThat(e.getMessage(), is("More names than fields"));
+    }
+  }
+
+  @Test public void testRenameValues() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.values(new String[]{"a", "b"}, true, 1, false, -50)
+            .build();
+    final String expected =
+        "LogicalValues(tuples=[[{ true, 1 }, { false, -50 }]])\n";
+    assertThat(str(root), is(expected));
+
+    // When you rename Values, you get a Values with a new row type, no Project
+    root =
+        builder.push(root)
+            .rename(ImmutableList.of("x", "y z"))
+            .build();
+    assertThat(str(root), is(expected));
+    assertThat(root.getRowType().getFieldNames().toString(), is("[x, y z]"));
   }
 
   @Test public void testPermute() {
@@ -525,8 +623,8 @@ public class RelBuilderTest {
     RelNode root =
         builder.scan("EMP")
             .aggregate(builder.groupKey(),
-                builder.aggregateCall(SqlStdOperatorTable.COUNT, true, null,
-                    "C", builder.field("DEPTNO")))
+                builder.aggregateCall(SqlStdOperatorTable.COUNT, true, false,
+                    null, "C", builder.field("DEPTNO")))
             .build();
     assertThat(str(root),
         is("LogicalAggregate(group=[{}], C=[COUNT(DISTINCT $7)])\n"
@@ -547,9 +645,10 @@ public class RelBuilderTest {
                         builder.field(4),
                         builder.field(3)),
                     builder.field(1)),
-                builder.aggregateCall(SqlStdOperatorTable.COUNT, false, null,
-                    "C"),
-                builder.aggregateCall(SqlStdOperatorTable.SUM, false, null, "S",
+                builder.aggregateCall(SqlStdOperatorTable.COUNT, false, false,
+                    null, "C"),
+                builder.aggregateCall(SqlStdOperatorTable.SUM, false, false,
+                    null, "S",
                     builder.call(SqlStdOperatorTable.PLUS, builder.field(3),
                         builder.literal(1))))
             .build();
@@ -569,15 +668,15 @@ public class RelBuilderTest {
     RelNode root =
         builder.scan("EMP")
             .aggregate(
-                builder.groupKey(ImmutableBitSet.of(7), true,
+                builder.groupKey(ImmutableBitSet.of(7),
                     ImmutableList.of(ImmutableBitSet.of(7),
                         ImmutableBitSet.of())),
-                builder.aggregateCall(SqlStdOperatorTable.COUNT, false,
+                builder.aggregateCall(SqlStdOperatorTable.COUNT, false, false,
                     builder.call(SqlStdOperatorTable.GREATER_THAN,
                         builder.field("EMPNO"), builder.literal(100)), "C"))
             .build();
     final String expected = ""
-        + "LogicalAggregate(group=[{7}], groups=[[{7}, {}]], indicator=[true], C=[COUNT() FILTER $8])\n"
+        + "LogicalAggregate(group=[{7}], groups=[[{7}, {}]], C=[COUNT() FILTER $8])\n"
         + "  LogicalProject(EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7], $f8=[>($0, 100)])\n"
         + "    LogicalTableScan(table=[[scott, EMP]])\n";
     assertThat(str(root), is(expected));
@@ -594,7 +693,7 @@ public class RelBuilderTest {
           builder.scan("EMP")
               .aggregate(
                   builder.groupKey(builder.field("DEPTNO")),
-                  builder.aggregateCall(SqlStdOperatorTable.SUM, false,
+                  builder.aggregateCall(SqlStdOperatorTable.SUM, false, false,
                       builder.field("COMM"), "C", builder.field("SAL")))
               .build();
       fail("expected error, got " + root);
@@ -614,7 +713,7 @@ public class RelBuilderTest {
         builder.scan("EMP")
             .aggregate(
                 builder.groupKey(builder.field("DEPTNO")),
-                builder.aggregateCall(SqlStdOperatorTable.SUM, false,
+                builder.aggregateCall(SqlStdOperatorTable.SUM, false, false,
                     builder.call(SqlStdOperatorTable.LESS_THAN,
                         builder.field("COMM"), builder.literal(100)), "C",
                     builder.field("SAL")))
@@ -626,12 +725,56 @@ public class RelBuilderTest {
     assertThat(str(root), is(expected));
   }
 
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1980">[CALCITE-1980]
+   * RelBuilder gives NPE if groupKey contains alias</a>.
+   *
+   * <p>Now, the alias does not cause a new expression to be added to the input,
+   * but causes the referenced fields to be renamed. */
+  @Test public void testAggregateProjectWithAliases() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .project(builder.field("DEPTNO"))
+            .aggregate(
+                builder.groupKey(
+                    builder.alias(builder.field("DEPTNO"), "departmentNo")))
+            .build();
+    final String expected = ""
+        + "LogicalAggregate(group=[{0}])\n"
+        + "  LogicalProject(departmentNo=[$0])\n"
+        + "    LogicalProject(DEPTNO=[$7])\n"
+        + "      LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  @Test public void testAggregateProjectWithExpression() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .project(builder.field("DEPTNO"))
+            .aggregate(
+                builder.groupKey(
+                    builder.alias(
+                        builder.call(SqlStdOperatorTable.PLUS,
+                            builder.field("DEPTNO"), builder.literal(3)),
+                        "d3")))
+            .build();
+    final String expected = ""
+        + "LogicalAggregate(group=[{1}])\n"
+        + "  LogicalProject(DEPTNO=[$0], d3=[$1])\n"
+        + "    LogicalProject(DEPTNO=[$0], $f1=[+($0, 3)])\n"
+        + "      LogicalProject(DEPTNO=[$7])\n"
+        + "        LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
   @Test public void testAggregateGroupingKeyOutOfRangeFails() {
     final RelBuilder builder = RelBuilder.create(config().build());
     try {
       RelNode root =
           builder.scan("EMP")
-              .aggregate(builder.groupKey(ImmutableBitSet.of(17), false, null))
+              .aggregate(builder.groupKey(ImmutableBitSet.of(17), null))
               .build();
       fail("expected error, got " + root);
     } catch (IllegalArgumentException e) {
@@ -645,7 +788,7 @@ public class RelBuilderTest {
       RelNode root =
           builder.scan("EMP")
               .aggregate(
-                  builder.groupKey(ImmutableBitSet.of(7), true,
+                  builder.groupKey(ImmutableBitSet.of(7),
                       ImmutableList.of(ImmutableBitSet.of(4),
                           ImmutableBitSet.of())))
               .build();
@@ -661,29 +804,111 @@ public class RelBuilderTest {
     RelNode root =
         builder.scan("EMP")
             .aggregate(
-                builder.groupKey(ImmutableBitSet.of(7, 6), true,
+                builder.groupKey(ImmutableBitSet.of(7, 6),
                     ImmutableList.of(ImmutableBitSet.of(7),
                         ImmutableBitSet.of(6),
                         ImmutableBitSet.of(7))))
             .build();
     final String expected = ""
-        + "LogicalAggregate(group=[{6, 7}], groups=[[{6}, {7}]], indicator=[true])\n"
+        + "LogicalAggregate(group=[{6, 7}], groups=[[{6}, {7}]])\n"
         + "  LogicalTableScan(table=[[scott, EMP]])\n";
     assertThat(str(root), is(expected));
   }
 
+  @Test public void testAggregateGrouping() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .aggregate(builder.groupKey(6, 7),
+                builder.aggregateCall(SqlStdOperatorTable.GROUPING, false,
+                    false, null, "g", builder.field("DEPTNO")))
+            .build();
+    final String expected = ""
+        + "LogicalAggregate(group=[{6, 7}], g=[GROUPING($7)])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  @Test public void testAggregateGroupingWithDistinctFails() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    try {
+      RelNode root =
+          builder.scan("EMP")
+              .aggregate(builder.groupKey(6, 7),
+                  builder.aggregateCall(SqlStdOperatorTable.GROUPING, true,
+                      false, null, "g", builder.field("DEPTNO")))
+              .build();
+      fail("expected error, got " + root);
+    } catch (IllegalArgumentException e) {
+      assertThat(e.getMessage(), is("DISTINCT not allowed"));
+    }
+  }
+
+  @Test public void testAggregateGroupingWithFilterFails() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    try {
+      RelNode root =
+          builder.scan("EMP")
+              .aggregate(builder.groupKey(6, 7),
+                  builder.aggregateCall(SqlStdOperatorTable.GROUPING, false,
+                      false, builder.literal(true), "g",
+                      builder.field("DEPTNO")))
+              .build();
+      fail("expected error, got " + root);
+    } catch (IllegalArgumentException e) {
+      assertThat(e.getMessage(), is("FILTER not allowed"));
+    }
+  }
+
   @Test public void testDistinct() {
     // Equivalent SQL:
-    //   SELECT DISTINCT *
-    //   FROM dept
+    //   SELECT DISTINCT deptno
+    //   FROM emp
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .project(builder.field("DEPTNO"))
+            .distinct()
+            .build();
+    final String expected = "LogicalAggregate(group=[{0}])\n"
+        + "  LogicalProject(DEPTNO=[$7])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root),
+        is(expected));
+  }
+
+  @Test public void testDistinctAlready() {
+    // DEPT is already distinct
     final RelBuilder builder = RelBuilder.create(config().build());
     RelNode root =
         builder.scan("DEPT")
             .distinct()
             .build();
     assertThat(str(root),
-        is("LogicalAggregate(group=[{0, 1, 2}])\n"
-                + "  LogicalTableScan(table=[[scott, DEPT]])\n"));
+        is("LogicalTableScan(table=[[scott, DEPT]])\n"));
+  }
+
+  @Test public void testDistinctEmpty() {
+    // Is a relation with zero columns distinct?
+    // What about if we know there are zero rows?
+    // It is a matter of definition: there are no duplicate rows,
+    // but applying "select ... group by ()" to it would change the result.
+    // In theory, we could omit the distinct if we know there is precisely one
+    // row, but we don't currently.
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .filter(
+                builder.call(SqlStdOperatorTable.IS_NULL,
+                    builder.field("COMM")))
+            .project()
+            .distinct()
+            .build();
+    final String expected = "LogicalAggregate(group=[{}])\n"
+        + "  LogicalProject\n"
+        + "    LogicalFilter(condition=[IS NULL($6)])\n"
+        + "      LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
   }
 
   @Test public void testUnion() {
@@ -710,6 +935,32 @@ public class RelBuilderTest {
             + "  LogicalProject(EMPNO=[$0])\n"
             + "    LogicalFilter(condition=[=($7, 20)])\n"
             + "      LogicalTableScan(table=[[scott, EMP]])\n"));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1522">[CALCITE-1522]
+   * Fix error message for SetOp with incompatible args</a>. */
+  @Test public void testBadUnionArgsErrorMessage() {
+    // Equivalent SQL:
+    //   SELECT EMPNO, SAL FROM emp
+    //   UNION ALL
+    //   SELECT DEPTNO FROM dept
+    final RelBuilder builder = RelBuilder.create(config().build());
+    try {
+      final RelNode root =
+          builder.scan("DEPT")
+              .project(builder.field("DEPTNO"))
+              .scan("EMP")
+              .project(builder.field("EMPNO"), builder.field("SAL"))
+              .union(true)
+              .build();
+      fail("Expected error, got " + root);
+    } catch (IllegalArgumentException e) {
+      final String expected = "Cannot compute compatible row type for "
+          + "arguments to set op: RecordType(TINYINT DEPTNO), "
+          + "RecordType(SMALLINT EMPNO, DECIMAL(7, 2) SAL)";
+      assertThat(e.getMessage(), is(expected));
+    }
   }
 
   @Test public void testUnion3() {
@@ -933,20 +1184,44 @@ public class RelBuilderTest {
 
   @Test public void testCorrelationFails() {
     final RelBuilder builder = RelBuilder.create(config().build());
-    builder.scan("EMP");
-    final RelOptCluster cluster = builder.peek().getCluster();
-    final CorrelationId id = cluster.createCorrel();
-    final RexNode v =
-        builder.getRexBuilder().makeCorrel(builder.peek().getRowType(), id);
+    final Holder<RexCorrelVariable> v = Holder.of(null);
     try {
-      builder.filter(builder.equals(builder.field(0), v))
+      builder.scan("EMP")
+          .variable(v)
+          .filter(builder.equals(builder.field(0), v.get()))
           .scan("DEPT")
-          .join(JoinRelType.INNER, builder.literal(true), ImmutableSet.of(id));
+          .join(JoinRelType.INNER, builder.literal(true),
+              ImmutableSet.of(v.get().id));
       fail("expected error");
     } catch (IllegalArgumentException e) {
       assertThat(e.getMessage(),
           containsString("variable $cor0 must not be used by left input to correlation"));
     }
+  }
+
+  @Test public void testCorrelationWithCondition() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    final Holder<RexCorrelVariable> v = Holder.of(null);
+    RelNode root = builder.scan("EMP")
+        .variable(v)
+        .scan("DEPT")
+        .filter(
+            builder.equals(builder.field(0),
+                builder.field(v.get(), "DEPTNO")))
+        .join(JoinRelType.LEFT,
+            builder.equals(builder.field(2, 0, "SAL"),
+                builder.literal(1000)),
+            ImmutableSet.of(v.get().id))
+        .build();
+    // Note that the join filter gets pushed to the right-hand input of
+    // LogicalCorrelate
+    final String expected = ""
+        + "LogicalCorrelate(correlation=[$cor0], joinType=[left], requiredColumns=[{7}])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n"
+        + "  LogicalFilter(condition=[=($cor0.SAL, 1000)])\n"
+        + "    LogicalFilter(condition=[=($0, $cor0.DEPTNO)])\n"
+        + "      LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(str(root), is(expected));
   }
 
   @Test public void testAlias() {
@@ -1005,6 +1280,231 @@ public class RelBuilderTest {
         + "    LogicalJoin(condition=[true], joinType=[inner])\n"
         + "      LogicalTableScan(table=[[scott, EMP]])\n"
         + "      LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  @Test public void testAliasSort() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .as("e")
+            .sort(0)
+            .project(builder.field("e", "EMPNO"))
+            .build();
+    final String expected = ""
+        + "LogicalProject(EMPNO=[$0])\n"
+        + "  LogicalSort(sort0=[$0], dir0=[ASC])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  @Test public void testAliasLimit() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .as("e")
+            .sort(1)
+            .sortLimit(10, 20) // aliases were lost here if preceded by sort()
+            .project(builder.field("e", "EMPNO"))
+            .build();
+    final String expected = ""
+        + "LogicalProject(EMPNO=[$0])\n"
+        + "  LogicalSort(sort0=[$1], dir0=[ASC], offset=[10], fetch=[20])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1551">[CALCITE-1551]
+   * RelBuilder's project() doesn't preserve alias</a>. */
+  @Test public void testAliasProject() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .as("EMP_alias")
+            .project(builder.field("DEPTNO"),
+                builder.literal(20))
+            .project(builder.field("EMP_alias", "DEPTNO"))
+            .build();
+    final String expected = ""
+        + "LogicalProject(DEPTNO=[$0])\n"
+        + "  LogicalProject(DEPTNO=[$7], $f1=[20])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  @Test public void testAliasAggregate() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .as("EMP_alias")
+            .project(builder.field("DEPTNO"),
+                builder.literal(20))
+            .aggregate(builder.groupKey(builder.field("EMP_alias", "DEPTNO")),
+                builder.aggregateCall(SqlStdOperatorTable.SUM, false, false,
+                    null, null, builder.field(1)))
+            .project(builder.alias(builder.field(1), "sum"),
+                builder.field("EMP_alias", "DEPTNO"))
+            .build();
+    final String expected = ""
+        + "LogicalProject(sum=[$1], DEPTNO=[$0])\n"
+        + "  LogicalAggregate(group=[{0}], agg#0=[SUM($1)])\n"
+        + "    LogicalProject(DEPTNO=[$7], $f1=[20])\n"
+        + "      LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  /** Tests that a projection retains field names after a join. */
+  @Test public void testProjectJoin() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .as("e")
+            .scan("DEPT")
+            .join(JoinRelType.INNER)
+            .project(builder.field("DEPT", "DEPTNO"),
+                builder.field(0),
+                builder.field("e", "MGR"))
+            // essentially a no-op, was previously throwing exception due to
+            // project() using join-renamed fields
+            .project(builder.field("DEPT", "DEPTNO"),
+                builder.field(1),
+                builder.field("e", "MGR"))
+            .build();
+    final String expected = ""
+        + "LogicalProject(DEPTNO=[$8], EMPNO=[$0], MGR=[$3])\n"
+        + "  LogicalJoin(condition=[true], joinType=[inner])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n"
+        + "    LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  @Test public void testMultiLevelAlias() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .as("e")
+            .scan("EMP")
+            .as("m")
+            .scan("DEPT")
+            .join(JoinRelType.INNER)
+            .join(JoinRelType.INNER)
+            .project(builder.field("DEPT", "DEPTNO"),
+                builder.field(16),
+                builder.field("m", "EMPNO"),
+                builder.field("e", "MGR"))
+            .as("all")
+            .filter(
+                builder.call(SqlStdOperatorTable.GREATER_THAN,
+                    builder.field("DEPT", "DEPTNO"),
+                    builder.literal(100)))
+            .project(builder.field("DEPT", "DEPTNO"),
+                builder.field("all", "EMPNO"))
+            .build();
+    final String expected = ""
+        + "LogicalProject(DEPTNO=[$0], EMPNO=[$2])\n"
+        + "  LogicalFilter(condition=[>($0, 100)])\n"
+        + "    LogicalProject(DEPTNO=[$16], DEPTNO0=[$16], EMPNO=[$8], MGR=[$3])\n"
+        + "      LogicalJoin(condition=[true], joinType=[inner])\n"
+        + "        LogicalTableScan(table=[[scott, EMP]])\n"
+        + "        LogicalJoin(condition=[true], joinType=[inner])\n"
+        + "          LogicalTableScan(table=[[scott, EMP]])\n"
+        + "          LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  @Test public void testUnionAlias() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .as("e1")
+            .project(builder.field("EMPNO"),
+                builder.call(SqlStdOperatorTable.CONCAT,
+                    builder.field("ENAME"),
+                    builder.literal("-1")))
+            .scan("EMP")
+            .as("e2")
+            .project(builder.field("EMPNO"),
+                builder.call(SqlStdOperatorTable.CONCAT,
+                    builder.field("ENAME"),
+                    builder.literal("-2")))
+            .union(false) // aliases lost here
+            .project(builder.fields(Lists.newArrayList(1, 0)))
+            .build();
+    final String expected = ""
+        + "LogicalProject($f1=[$1], EMPNO=[$0])\n"
+        + "  LogicalUnion(all=[false])\n"
+        + "    LogicalProject(EMPNO=[$0], $f1=[||($1, '-1')])\n"
+        + "      LogicalTableScan(table=[[scott, EMP]])\n"
+        + "    LogicalProject(EMPNO=[$0], $f1=[||($1, '-2')])\n"
+        + "      LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1523">[CALCITE-1523]
+   * Add RelBuilder field() method to reference aliased relations not on top of
+   * stack</a>, accessing tables aliased that are not accessible in the top
+   * RelNode. */
+  @Test public void testAliasPastTop() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   LEFT JOIN dept ON emp.deptno = dept.deptno
+    //     AND emp.empno = 123
+    //     AND dept.deptno IS NOT NULL
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .scan("DEPT")
+            .join(JoinRelType.LEFT,
+                builder.call(SqlStdOperatorTable.EQUALS,
+                    builder.field(2, "EMP", "DEPTNO"),
+                    builder.field(2, "DEPT", "DEPTNO")),
+                builder.call(SqlStdOperatorTable.EQUALS,
+                    builder.field(2, "EMP", "EMPNO"),
+                    builder.literal(123)))
+            .build();
+    final String expected = ""
+        + "LogicalJoin(condition=[AND(=($7, $8), =($0, 123))], joinType=[left])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  /** As {@link #testAliasPastTop()}. */
+  @Test public void testAliasPastTop2() {
+    // Equivalent SQL:
+    //   SELECT t1.EMPNO, t2.EMPNO, t3.DEPTNO
+    //   FROM emp t1
+    //   INNER JOIN emp t2 ON t1.EMPNO = t2.EMPNO
+    //   INNER JOIN dept t3 ON t1.DEPTNO = t3.DEPTNO
+    //     AND t2.JOB != t3.LOC
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP").as("t1")
+            .scan("EMP").as("t2")
+            .join(JoinRelType.INNER,
+                builder.equals(builder.field(2, "t1", "EMPNO"),
+                    builder.field(2, "t2", "EMPNO")))
+            .scan("DEPT").as("t3")
+            .join(JoinRelType.INNER,
+                builder.equals(builder.field(2, "t1", "DEPTNO"),
+                    builder.field(2, "t3", "DEPTNO")),
+                builder.not(
+                    builder.equals(builder.field(2, "t2", "JOB"),
+                        builder.field(2, "t3", "LOC"))))
+            .build();
+    // Cols:
+    // 0-7   EMP as t1
+    // 8-15  EMP as t2
+    // 16-18 DEPT as t3
+    final String expected = ""
+        + "LogicalJoin(condition=[AND(=($7, $16), <>($10, $18))], joinType=[inner])\n"
+        + "  LogicalJoin(condition=[=($0, $8)], joinType=[inner])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n"
+        + "  LogicalTableScan(table=[[scott, DEPT]])\n";
     assertThat(str(root), is(expected));
   }
 
@@ -1172,6 +1672,27 @@ public class RelBuilderTest {
     assertThat(str(root), is(expected));
   }
 
+  @Test public void testSortDuplicate() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   ORDER BY empno DESC, deptno, empno ASC, hiredate
+    //
+    // The sort key "empno ASC" is unnecessary and is ignored.
+    final RelBuilder builder = RelBuilder.create(config().build());
+    final RelNode root =
+        builder.scan("EMP")
+            .sort(builder.desc(builder.field("EMPNO")),
+                builder.field("DEPTNO"),
+                builder.field("EMPNO"),
+                builder.field("HIREDATE"))
+            .build();
+    final String expected = "LogicalSort(sort0=[$0], sort1=[$7], sort2=[$4], "
+        + "dir0=[DESC], dir1=[ASC], dir2=[ASC])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
   @Test public void testSortByExpression() {
     // Equivalent SQL:
     //   SELECT *
@@ -1237,6 +1758,32 @@ public class RelBuilderTest {
             .build();
     final String expected = "LogicalValues(tuples=[[]])\n";
     assertThat(str(root), is(expected));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1610">[CALCITE-1610]
+   * RelBuilder sort-combining optimization treats aliases incorrectly</a>. */
+  @Test public void testSortOverProjectSort() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    builder.scan("EMP")
+        .sort(0)
+        .project(builder.field(1))
+        // was throwing exception here when attempting to apply to
+        // inner sort node
+        .limit(0, 1)
+        .build();
+    RelNode r = builder.scan("EMP")
+        .sort(0)
+        .project(Lists.newArrayList(builder.field(1)),
+            Lists.newArrayList("F1"))
+        .limit(0, 1)
+        // make sure we can still access the field by alias
+        .project(builder.field("F1"))
+        .build();
+    String expected = "LogicalProject(F1=[$1])\n"
+        + "  LogicalSort(sort0=[$0], dir0=[ASC], fetch=[1])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(r), is(expected));
   }
 
   /** Tests that a sort on a field followed by a limit gives the same
@@ -1333,6 +1880,134 @@ public class RelBuilderTest {
           + "EMPNO=7902; ENAME=FORD; JOB=ANALYST; MGR=7566; HIREDATE=1981-12-03; SAL=3000.00; COMM=null; DEPTNO=20\n";
       assertThat(s, is(result));
     }
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1595">[CALCITE-1595]
+   * RelBuilder.call throws NullPointerException if argument types are
+   * invalid</a>. */
+  @Test public void testTypeInferenceValidation() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    // test for a) call(operator, Iterable<RexNode>)
+    final RexNode arg0 = builder.literal(0);
+    final RexNode arg1 = builder.literal("xyz");
+    try {
+      builder.call(SqlStdOperatorTable.PLUS, Lists.newArrayList(arg0, arg1));
+      fail("Invalid combination of parameter types");
+    } catch (IllegalArgumentException e) {
+      assertThat(e.getMessage(), containsString("cannot derive type"));
+    }
+
+    // test for b) call(operator, RexNode...)
+    try {
+      builder.call(SqlStdOperatorTable.PLUS, arg0, arg1);
+      fail("Invalid combination of parameter types");
+    } catch (IllegalArgumentException e) {
+      assertThat(e.getMessage(), containsString("cannot derive type"));
+    }
+  }
+
+  @Test public void testMatchRecognize() {
+    // Equivalent SQL:
+    //   SELECT *
+    //   FROM emp
+    //   MATCH_RECOGNIZE (
+    //     PARTITION BY deptno
+    //     ORDER BY empno asc
+    //     MEASURES
+    //       STRT.mgr as start_nw,
+    //       LAST(DOWN.mgr) as bottom_nw,
+    //     PATTERN (STRT DOWN+ UP+) WITHIN INTERVAL '5' SECOND
+    //     DEFINE
+    //       DOWN as DOWN.mgr < PREV(DOWN.mgr),
+    //       UP as UP.mgr > PREV(UP.mgr)
+    //   )
+    final RelBuilder builder = RelBuilder.create(config().build()).scan("EMP");
+    final RelDataTypeFactory typeFactory = builder.getTypeFactory();
+    final RelDataType intType = typeFactory.createSqlType(SqlTypeName.INTEGER);
+
+    RexNode pattern = builder.patternConcat(
+        builder.literal("STRT"),
+        builder.patternQuantify(builder.literal("DOWN"), builder.literal(1),
+            builder.literal(-1), builder.literal(false)),
+        builder.patternQuantify(builder.literal("UP"), builder.literal(1),
+            builder.literal(-1), builder.literal(false)));
+
+    ImmutableMap.Builder<String, RexNode> pdBuilder = new ImmutableMap.Builder<>();
+    RexNode downDefinition = builder.call(SqlStdOperatorTable.LESS_THAN,
+        builder.call(SqlStdOperatorTable.PREV,
+            builder.patternField("DOWN", intType, 3),
+            builder.literal(0)),
+        builder.call(SqlStdOperatorTable.PREV,
+            builder.patternField("DOWN", intType, 3),
+            builder.literal(1)));
+    pdBuilder.put("DOWN", downDefinition);
+    RexNode upDefinition = builder.call(SqlStdOperatorTable.GREATER_THAN,
+        builder.call(SqlStdOperatorTable.PREV,
+            builder.patternField("UP", intType, 3),
+            builder.literal(0)),
+        builder.call(SqlStdOperatorTable.PREV,
+            builder.patternField("UP", intType, 3),
+            builder.literal(1)));
+    pdBuilder.put("UP", upDefinition);
+
+    ImmutableList.Builder<RexNode> measuresBuilder = new ImmutableList.Builder<>();
+    measuresBuilder.add(
+        builder.alias(builder.patternField("STRT", intType, 3),
+            "start_nw"));
+    measuresBuilder.add(
+        builder.alias(
+            builder.call(SqlStdOperatorTable.LAST,
+                builder.patternField("DOWN", intType, 3),
+                builder.literal(0)),
+            "bottom_nw"));
+
+    RexNode after = builder.getRexBuilder().makeFlag(
+        SqlMatchRecognize.AfterOption.SKIP_TO_NEXT_ROW);
+
+    ImmutableList.Builder<RexNode> partitionKeysBuilder = new ImmutableList.Builder<>();
+    partitionKeysBuilder.add(builder.field("DEPTNO"));
+
+    ImmutableList.Builder<RexNode> orderKeysBuilder = new ImmutableList.Builder<>();
+    orderKeysBuilder.add(builder.field("EMPNO"));
+
+    RexNode interval = builder.literal("INTERVAL '5' SECOND");
+
+    final ImmutableMap<String, TreeSet<String>> subsets = ImmutableMap.of();
+    final RelNode root = builder
+        .match(pattern, false, false, pdBuilder.build(),
+            measuresBuilder.build(), after, subsets, false,
+            partitionKeysBuilder.build(), orderKeysBuilder.build(), interval)
+        .build();
+    final String expected = "LogicalMatch(partition=[[$7]], order=[[0]], "
+        + "outputFields=[[$7, 'start_nw', 'bottom_nw']], allRows=[false], "
+        + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[(('STRT', "
+        + "PATTERN_QUANTIFIER('DOWN', 1, -1, false)), "
+        + "PATTERN_QUANTIFIER('UP', 1, -1, false))], "
+        + "isStrictStarts=[false], isStrictEnds=[false], "
+        + "interval=['INTERVAL ''5'' SECOND'], subsets=[[]], "
+        + "patternDefinitions=[[<(PREV(DOWN.$3, 0), PREV(DOWN.$3, 1)), "
+        + ">(PREV(UP.$3, 0), PREV(UP.$3, 1))]], "
+        + "inputFields=[[EMPNO, ENAME, JOB, MGR, HIREDATE, SAL, COMM, DEPTNO]])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
+  }
+
+  @Test public void testFilterCastAny() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    final RelDataType anyType =
+        builder.getTypeFactory().createSqlType(SqlTypeName.ANY);
+    final RelNode root =
+        builder.scan("EMP")
+            .filter(
+                builder.cast(
+                    builder.getRexBuilder().makeInputRef(anyType, 0),
+                    SqlTypeName.BOOLEAN))
+            .build();
+    final String expected = ""
+        + "LogicalFilter(condition=[CAST($0):BOOLEAN NOT NULL])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(str(root), is(expected));
   }
 }
 

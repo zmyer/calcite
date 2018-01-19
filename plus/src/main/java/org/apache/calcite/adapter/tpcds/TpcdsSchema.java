@@ -41,6 +41,7 @@ import net.hydromatic.tpcds.TpcdsTable;
 import java.sql.Date;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** Schema that provides TPC-DS tables, populated according to a
@@ -88,7 +89,7 @@ public class TpcdsSchema extends AbstractSchema {
     final ImmutableMap.Builder<String, Table> builder = ImmutableMap.builder();
     for (TpcdsTable<?> tpcdsTable : TpcdsTable.getTables()) {
       //noinspection unchecked
-      builder.put(tpcdsTable.getTableName().toUpperCase(),
+      builder.put(tpcdsTable.getTableName().toUpperCase(Locale.ROOT),
           new TpcdsQueryableTable(tpcdsTable));
     }
     this.tableMap = builder.build();
@@ -98,7 +99,9 @@ public class TpcdsSchema extends AbstractSchema {
     return tableMap;
   }
 
-  /** Definition of a table in the TPC-DS schema. */
+  /** Definition of a table in the TPC-DS schema.
+   *
+   * @param <E> entity type */
   private class TpcdsQueryableTable<E extends TpcdsEntity>
       extends AbstractQueryableTable {
     private final TpcdsTable<E> tpcdsTable;
@@ -164,9 +167,9 @@ public class TpcdsSchema extends AbstractSchema {
     }
 
     public RelDataType getRowType(RelDataTypeFactory typeFactory) {
-      final RelDataTypeFactory.FieldInfoBuilder builder = typeFactory.builder();
+      final RelDataTypeFactory.Builder builder = typeFactory.builder();
       for (TpcdsColumn<E> column : tpcdsTable.getColumns()) {
-        builder.add(column.getColumnName().toUpperCase(),
+        builder.add(column.getColumnName().toUpperCase(Locale.ROOT),
             typeFactory.createJavaType(realType(column)));
       }
       return builder.build();

@@ -27,7 +27,9 @@ import org.apache.calcite.sql.SqlCallBinding;
 import org.apache.calcite.sql.SqlCollation;
 import org.apache.calcite.sql.SqlOperatorBinding;
 import org.apache.calcite.sql.SqlUtil;
-import org.apache.calcite.util.Util;
+import org.apache.calcite.util.Glossary;
+
+import com.google.common.base.Preconditions;
 
 import java.util.AbstractList;
 import java.util.List;
@@ -295,7 +297,7 @@ public abstract class ReturnTypes {
    * of results of aggregations". These rules are used in union, except,
    * intersect, case and other places.
    *
-   * @sql.99 Part 2 Section 9.3
+   * @see Glossary#SQL99 SQL:1999 Part 2 Section 9.3
    */
   public static final SqlReturnTypeInference LEAST_RESTRICTIVE =
       new SqlReturnTypeInference() {
@@ -316,6 +318,7 @@ public abstract class ReturnTypes {
               new ExplicitOperatorBinding(
                   opBinding,
                   new AbstractList<RelDataType>() {
+                    // CHECKSTYLE: IGNORE 12
                     public RelDataType get(int index) {
                       RelDataType type =
                           opBinding.getOperandType(index)
@@ -327,7 +330,6 @@ public abstract class ReturnTypes {
                     public int size() {
                       return opBinding.getOperandCount();
                     }
-                    // CHECKSTYLE: IGNORE 1
                   });
           RelDataType biggestElementType =
               LEAST_RESTRICTIVE.inferReturnType(newBinding);
@@ -494,9 +496,9 @@ public abstract class ReturnTypes {
    * <li>p = max(p1 - s1, p2 - s2) + s + 1</li>
    * </ul>
    *
-   * p and s are capped at their maximum values
+   * <p>p and s are capped at their maximum values
    *
-   * @sql.2003 Part 2 Section 6.26
+   * @see Glossary#SQL2003 SQL:2003 Part 2 Section 6.26
    */
   public static final SqlReturnTypeInference DECIMAL_SUM =
       new SqlReturnTypeInference() {
@@ -561,7 +563,7 @@ public abstract class ReturnTypes {
    * <li>result is varying if either input is; otherwise fixed
    * </ul>
    *
-   * Pre-requisites:
+   * <p>Pre-requisites:
    *
    * <ul>
    * <li>input types must be of the same string type
@@ -570,11 +572,7 @@ public abstract class ReturnTypes {
    */
   public static final SqlReturnTypeInference DYADIC_STRING_SUM_PRECISION =
       new SqlReturnTypeInference() {
-        /**
-         * @pre SqlTypeUtil.sameNamedType(argTypes[0], (argTypes[1]))
-         */
-        public RelDataType inferReturnType(
-            SqlOperatorBinding opBinding) {
+        public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
           final RelDataType argType0 = opBinding.getOperandType(0);
           final RelDataType argType1 = opBinding.getOperandType(1);
 
@@ -585,9 +583,8 @@ public abstract class ReturnTypes {
           if (!containsAnyType
               && !(SqlTypeUtil.inCharOrBinaryFamilies(argType0)
                   && SqlTypeUtil.inCharOrBinaryFamilies(argType1))) {
-            Util.pre(
-                SqlTypeUtil.sameNamedType(argType0, argType1),
-                "SqlTypeUtil.sameNamedType(argTypes[0], argTypes[1])");
+            Preconditions.checkArgument(
+                SqlTypeUtil.sameNamedType(argType0, argType1));
           }
           SqlCollation pickedCollation = null;
           if (!containsAnyType
@@ -615,46 +612,42 @@ public abstract class ReturnTypes {
 
           RelDataType ret;
           int typePrecision;
-          if (argType0.getPrecision()
-              == RelDataType.PRECISION_NOT_SPECIFIED
-                  && argType1.getPrecision()
-                      == RelDataType.PRECISION_NOT_SPECIFIED) {
+          final long x =
+              (long) argType0.getPrecision() + (long) argType1.getPrecision();
+          final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+          final RelDataTypeSystem typeSystem = typeFactory.getTypeSystem();
+          if (argType0.getPrecision() == RelDataType.PRECISION_NOT_SPECIFIED
+              || argType1.getPrecision() == RelDataType.PRECISION_NOT_SPECIFIED
+              || x > typeSystem.getMaxPrecision(typeName)) {
             typePrecision = RelDataType.PRECISION_NOT_SPECIFIED;
           } else {
-            typePrecision =
-                argType0.getPrecision() + argType1.getPrecision();
+            typePrecision = (int) x;
           }
 
-          ret = opBinding.getTypeFactory()
-              .createSqlType(typeName, typePrecision);
+          ret = typeFactory.createSqlType(typeName, typePrecision);
           if (null != pickedCollation) {
             RelDataType pickedType;
-            if (argType0.getCollation().equals(
-                pickedCollation)) {
+            if (argType0.getCollation().equals(pickedCollation)) {
               pickedType = argType0;
-            } else if (argType1.getCollation().equals(
-                pickedCollation)) {
+            } else if (argType1.getCollation().equals(pickedCollation)) {
               pickedType = argType1;
             } else {
-              throw Util.newInternal("should never come here");
+              throw new AssertionError("should never come here");
             }
             ret =
-                opBinding.getTypeFactory()
-                    .createTypeWithCharsetAndCollation(
-                        ret,
-                        pickedType.getCharset(),
-                        pickedType.getCollation());
+                typeFactory.createTypeWithCharsetAndCollation(ret,
+                    pickedType.getCharset(), pickedType.getCollation());
           }
           return ret;
         }
       };
+
   /**
    * Same as {@link #DYADIC_STRING_SUM_PRECISION} and using
    * {@link org.apache.calcite.sql.type.SqlTypeTransforms#TO_NULLABLE},
    * {@link org.apache.calcite.sql.type.SqlTypeTransforms#TO_VARYING}.
    */
-  public static final SqlReturnTypeInference
-  DYADIC_STRING_SUM_PRECISION_NULLABLE_VARYING =
+  public static final SqlReturnTypeInference DYADIC_STRING_SUM_PRECISION_NULLABLE_VARYING =
       cascade(DYADIC_STRING_SUM_PRECISION, SqlTypeTransforms.TO_NULLABLE,
           SqlTypeTransforms.TO_VARYING);
 
@@ -662,8 +655,7 @@ public abstract class ReturnTypes {
    * Same as {@link #DYADIC_STRING_SUM_PRECISION} and using
    * {@link org.apache.calcite.sql.type.SqlTypeTransforms#TO_NULLABLE}
    */
-  public static final SqlReturnTypeInference
-  DYADIC_STRING_SUM_PRECISION_NULLABLE =
+  public static final SqlReturnTypeInference DYADIC_STRING_SUM_PRECISION_NULLABLE =
       cascade(DYADIC_STRING_SUM_PRECISION, SqlTypeTransforms.TO_NULLABLE);
 
   /**
@@ -787,8 +779,66 @@ public abstract class ReturnTypes {
         @Override public RelDataType
         inferReturnType(SqlOperatorBinding opBinding) {
           final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
-          return typeFactory.getTypeSystem()
+          final RelDataType sumType = typeFactory.getTypeSystem()
               .deriveSumType(typeFactory, opBinding.getOperandType(0));
+          // SUM0 should not return null.
+          return typeFactory.createTypeWithNullability(sumType, false);
+        }
+      };
+
+  /**
+   * Type-inference strategy for the {@code CUME_DIST} and {@code PERCENT_RANK}
+   * aggregate functions.
+   */
+  public static final SqlReturnTypeInference FRACTIONAL_RANK =
+      new SqlReturnTypeInference() {
+        @Override public RelDataType
+        inferReturnType(SqlOperatorBinding opBinding) {
+          final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+          return typeFactory.getTypeSystem().deriveFractionalRankType(typeFactory);
+        }
+      };
+
+  /**
+   * Type-inference strategy for the {@code NTILE}, {@code RANK},
+   * {@code DENSE_RANK}, and {@code ROW_NUMBER} aggregate functions.
+   */
+  public static final SqlReturnTypeInference RANK =
+      new SqlReturnTypeInference() {
+        @Override public RelDataType
+        inferReturnType(SqlOperatorBinding opBinding) {
+          final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+          return typeFactory.getTypeSystem().deriveRankType(typeFactory);
+        }
+      };
+
+  public static final SqlReturnTypeInference AVG_AGG_FUNCTION =
+      new SqlReturnTypeInference() {
+        @Override public RelDataType
+        inferReturnType(SqlOperatorBinding opBinding) {
+          final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+          final RelDataType relDataType = typeFactory.getTypeSystem().deriveAvgAggType(
+              typeFactory, opBinding.getOperandType(0));
+          if (opBinding.getGroupCount() == 0 || opBinding.hasFilter()) {
+            return typeFactory.createTypeWithNullability(relDataType, true);
+          } else {
+            return relDataType;
+          }
+        }
+      };
+
+  public static final SqlReturnTypeInference COVAR_FUNCTION =
+      new SqlReturnTypeInference() {
+        @Override public RelDataType
+        inferReturnType(SqlOperatorBinding opBinding) {
+          final RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+          final RelDataType relDataType = typeFactory.getTypeSystem().deriveCovarType(
+              typeFactory, opBinding.getOperandType(0), opBinding.getOperandType(1));
+          if (opBinding.getGroupCount() == 0 || opBinding.hasFilter()) {
+            return typeFactory.createTypeWithNullability(relDataType, true);
+          } else {
+            return relDataType;
+          }
         }
       };
 }

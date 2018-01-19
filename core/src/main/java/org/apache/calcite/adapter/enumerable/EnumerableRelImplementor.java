@@ -28,6 +28,7 @@ import org.apache.calcite.linq4j.tree.ConditionalStatement;
 import org.apache.calcite.linq4j.tree.ConstantExpression;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
+import org.apache.calcite.linq4j.tree.GotoStatement;
 import org.apache.calcite.linq4j.tree.MemberDeclaration;
 import org.apache.calcite.linq4j.tree.MethodCallExpression;
 import org.apache.calcite.linq4j.tree.NewArrayExpression;
@@ -36,7 +37,7 @@ import org.apache.calcite.linq4j.tree.ParameterExpression;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.linq4j.tree.Statement;
 import org.apache.calcite.linq4j.tree.Types;
-import org.apache.calcite.linq4j.tree.Visitor;
+import org.apache.calcite.linq4j.tree.VisitorImpl;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.runtime.Bindable;
 import org.apache.calcite.util.BuiltInMethod;
@@ -66,19 +67,24 @@ import java.util.Set;
  * operators of {@link EnumerableConvention} calling convention.
  */
 public class EnumerableRelImplementor extends JavaRelImplementor {
+  /** Maximum number of arguments to a constructor. See
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1097">[CALCITE-1097]
+   * Exception when executing query with too many aggregation columns</a> for
+   * details. */
+  private static final int MAX_CONSTRUCTOR_ARG_COUNT = 10;
+
   public final Map<String, Object> map;
   private final Map<String, RexToLixTranslator.InputGetter> corrVars =
       Maps.newHashMap();
   private final Map<Object, ParameterExpression> stashedParameters =
       Maps.newIdentityHashMap();
 
-  protected final Function1<String, RexToLixTranslator.InputGetter>
-  allCorrelateVariables =
-    new Function1<String, RexToLixTranslator.InputGetter>() {
-      public RexToLixTranslator.InputGetter apply(String name) {
-        return getCorrelVariableGetter(name);
-      }
-    };
+  protected final Function1<String, RexToLixTranslator.InputGetter> allCorrelateVariables =
+      new Function1<String, RexToLixTranslator.InputGetter>() {
+        public RexToLixTranslator.InputGetter apply(String name) {
+          return getCorrelVariableGetter(name);
+        }
+      };
 
   public EnumerableRelImplementor(RexBuilder rexBuilder,
       Map<String, Object> internalParameters) {
@@ -99,7 +105,30 @@ public class EnumerableRelImplementor extends JavaRelImplementor {
 
   public ClassDeclaration implementRoot(EnumerableRel rootRel,
       EnumerableRel.Prefer prefer) {
-    final EnumerableRel.Result result = rootRel.implement(this, prefer);
+    EnumerableRel.Result result = rootRel.implement(this, prefer);
+    switch (prefer) {
+    case ARRAY:
+      if (result.physType.getFormat() == JavaRowFormat.ARRAY
+          && rootRel.getRowType().getFieldCount() == 1) {
+        BlockBuilder bb = new BlockBuilder();
+        Expression e = null;
+        for (Statement statement : result.block.statements) {
+          if (statement instanceof GotoStatement) {
+            e = bb.append("v", ((GotoStatement) statement).expression);
+          } else {
+            bb.add(statement);
+          }
+        }
+        if (e != null) {
+          bb.add(
+              Expressions.return_(null,
+                  Expressions.call(null, BuiltInMethod.SLICE0.method, e)));
+        }
+        result = new EnumerableRel.Result(bb.toBlock(), result.physType,
+            JavaRowFormat.SCALAR);
+      }
+    }
+
     final List<MemberDeclaration> memberDeclarations = new ArrayList<>();
     new TypeRegistrar(memberDeclarations).go(result);
 
@@ -458,26 +487,19 @@ public class EnumerableRelImplementor extends JavaRelImplementor {
   }
 
   /** Visitor that finds types in an {@link Expression} tree. */
-  private static class TypeFinder extends Visitor {
+  private static class TypeFinder extends VisitorImpl<Void> {
     private final Collection<Type> types;
 
     TypeFinder(Collection<Type> types) {
       this.types = types;
     }
 
-    @Override public Expression visit(
-        NewExpression newExpression,
-        List<Expression> arguments,
-        List<MemberDeclaration> memberDeclarations) {
+    @Override public Void visit(NewExpression newExpression) {
       types.add(newExpression.type);
-      return super.visit(
-          newExpression,
-          arguments,
-          memberDeclarations);
+      return super.visit(newExpression);
     }
 
-    @Override public Expression visit(NewArrayExpression newArrayExpression,
-        int dimension, Expression bound, List<Expression> expressions) {
+    @Override public Void visit(NewArrayExpression newArrayExpression) {
       Type type = newArrayExpression.type;
       for (;;) {
         final Type componentType = Types.getComponentType(type);
@@ -487,7 +509,14 @@ public class EnumerableRelImplementor extends JavaRelImplementor {
         type = componentType;
       }
       types.add(type);
-      return super.visit(newArrayExpression, dimension, bound, expressions);
+      return super.visit(newArrayExpression);
+    }
+
+    @Override public Void visit(ConstantExpression constantExpression) {
+      if (constantExpression.value instanceof Type) {
+        types.add((Type) constantExpression.value);
+      }
+      return super.visit(constantExpression);
     }
   }
 

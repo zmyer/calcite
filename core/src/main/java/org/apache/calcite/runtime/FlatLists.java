@@ -19,6 +19,7 @@ package org.apache.calcite.runtime;
 import org.apache.calcite.util.ImmutableNullableList;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
 import java.util.AbstractList;
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.RandomAccess;
 
@@ -138,8 +140,8 @@ public class FlatLists {
    * @param t Array of members of list
    * @return List containing the given members
    */
-  private static <T extends Object & Comparable> ComparableList<T>
-  flatList_(T[] t, boolean copy) {
+  private static <T extends Object & Comparable> ComparableList<T> flatList_(
+      T[] t, boolean copy) {
     switch (t.length) {
     case 0:
       //noinspection unchecked
@@ -209,8 +211,8 @@ public class FlatLists {
     return of_(t);
   }
 
-  public static <T extends Comparable> ComparableList<T>
-  ofComparable(List<T> t) {
+  public static <T extends Comparable> ComparableList<T> ofComparable(
+      List<T> t) {
     return of_(t);
   }
 
@@ -252,7 +254,21 @@ public class FlatLists {
     return FlatLists.of(newList);
   }
 
-  /** Base class for flat lists. */
+  /** Returns a list that consists of a given list plus an element, guaranteed
+   * to be an {@link ImmutableList}. */
+  public static <E> ImmutableList<E> append(ImmutableList<E> list, E e) {
+    return ImmutableList.<E>builder().addAll(list).add(e).build();
+  }
+
+  /** Returns a map that consists of a given map plus an (key, value),
+   * guaranteed to be an {@link ImmutableMap}. */
+  public static <K, V> ImmutableMap<K, V> append(Map<K, V> map, K k, V v) {
+    return ImmutableMap.<K, V>builder().putAll(map).put(k, v).build();
+  }
+
+  /** Base class for flat lists.
+   *
+   * @param <T> element type */
   public abstract static class AbstractFlatList<T>
       extends AbstractImmutableList<T> implements RandomAccess {
     protected final List<T> toList() {
@@ -1187,7 +1203,9 @@ public class FlatLists {
     }
   }
 
-  /** Empty list that implements the {@link Comparable} interface. */
+  /** Empty list that implements the {@link Comparable} interface.
+   *
+   * @param <T> element type */
   private static class ComparableEmptyList<T>
       extends AbstractList<T>
       implements ComparableList<T> {
@@ -1223,12 +1241,16 @@ public class FlatLists {
    * {@link ClassCastException} at runtime when you call
    * {@link #compareTo(Object)} if the elements of the list do not implement
    * {@code Comparable}.
+   *
+   * @param <T> element type
    */
   public interface ComparableList<T> extends List<T>, Comparable<List> {
   }
 
   /** Wrapper around a list that makes it implement the {@link Comparable}
-   * interface using lexical ordering. The elements must be comparable. */
+   * interface using lexical ordering. The elements must be comparable.
+   *
+   * @param <T> element type */
   static class ComparableListImpl<T extends Comparable<T>>
       extends AbstractList<T>
       implements ComparableList<T> {
@@ -1250,8 +1272,7 @@ public class FlatLists {
       return compare(list, o);
     }
 
-    static <T extends Comparable<T>>
-    int compare(List<T> list0, List<T> list1) {
+    static <T extends Comparable<T>> int compare(List<T> list0, List<T> list1) {
       final int size0 = list0.size();
       final int size1 = list1.size();
       if (size1 == size0) {
@@ -1264,8 +1285,8 @@ public class FlatLists {
       return size0 - size1;
     }
 
-    static <T extends Comparable<T>>
-    int compare(List<T> list0, List<T> list1, int size) {
+    static <T extends Comparable<T>> int compare(List<T> list0, List<T> list1,
+        int size) {
       for (int i = 0; i < size; i++) {
         Comparable o0 = list0.get(i);
         Comparable o1 = list1.get(i);

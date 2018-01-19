@@ -55,6 +55,7 @@ import org.apache.calcite.schema.SchemaPlus;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlExplainFormat;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.SqlFunctionCategory;
 import org.apache.calcite.sql.SqlKind;
@@ -155,7 +156,7 @@ public class PlannerTest {
 
   private String toString(RelNode rel) {
     return Util.toLinux(
-        RelOptUtil.dumpPlan("", rel, false,
+        RelOptUtil.dumpPlan("", rel, SqlExplainFormat.TEXT,
             SqlExplainLevel.DIGEST_ATTRIBUTES));
   }
 
@@ -966,7 +967,7 @@ public class PlannerTest {
   private class MockJdbcTableScan extends TableScan
       implements JdbcRel {
 
-    public MockJdbcTableScan(RelOptCluster cluster, RelOptTable table,
+    MockJdbcTableScan(RelOptCluster cluster, RelOptTable table,
         JdbcConvention jdbcConvention) {
       super(cluster, cluster.traitSetOf(jdbcConvention), table);
     }
@@ -1020,12 +1021,13 @@ public class PlannerTest {
         .defaultSchema(schema)
         .programs(Programs.ofRules(Programs.RULE_SET))
         .build();
-    Planner p = Frameworks.getPlanner(config);
-    SqlNode n = p.parse(tpchTestQuery);
-    n = p.validate(n);
-    RelNode r = p.rel(n).project();
-    String plan = RelOptUtil.toString(r);
-    p.close();
+    String plan;
+    try (Planner p = Frameworks.getPlanner(config)) {
+      SqlNode n = p.parse(tpchTestQuery);
+      n = p.validate(n);
+      RelNode r = p.rel(n).project();
+      plan = RelOptUtil.toString(r);
+    }
     return plan;
   }
 
@@ -1036,10 +1038,12 @@ public class PlannerTest {
           OperandTypes.ANY, SqlFunctionCategory.NUMERIC, false, false);
     }
 
+    @SuppressWarnings("deprecation")
     public List<RelDataType> getParameterTypes(RelDataTypeFactory typeFactory) {
       return ImmutableList.of(typeFactory.createSqlType(SqlTypeName.ANY));
     }
 
+    @SuppressWarnings("deprecation")
     public RelDataType getReturnType(RelDataTypeFactory typeFactory) {
       return typeFactory.createSqlType(SqlTypeName.BIGINT);
     }
@@ -1063,28 +1067,29 @@ public class PlannerTest {
         .add("tpch", new ReflectiveSchema(new TpchSchema()));
 
     String query = "select t.psPartkey from \n"
-      + "(select ps.psPartkey from `tpch`.`partsupp` ps \n"
-      + "order by ps.psPartkey, ps.psSupplyCost) t \n"
-      + "order by t.psPartkey";
+        + "(select ps.psPartkey from `tpch`.`partsupp` ps \n"
+        + "order by ps.psPartkey, ps.psSupplyCost) t \n"
+        + "order by t.psPartkey";
 
     List<RelTraitDef> traitDefs = new ArrayList<>();
     traitDefs.add(ConventionTraitDef.INSTANCE);
     traitDefs.add(RelCollationTraitDef.INSTANCE);
     final SqlParser.Config parserConfig =
         SqlParser.configBuilder().setLex(Lex.MYSQL).build();
-    Planner p = Frameworks.getPlanner(
-        Frameworks.newConfigBuilder()
-            .parserConfig(parserConfig)
-            .defaultSchema(schema)
-            .traitDefs(traitDefs)
-            .programs(Programs.ofRules(Programs.RULE_SET))
-            .build());
-    SqlNode n = p.parse(query);
-    n = p.validate(n);
-    RelNode r = p.rel(n).project();
-    String plan = RelOptUtil.toString(r);
-    plan = Util.toLinux(plan);
-    p.close();
+    FrameworkConfig config = Frameworks.newConfigBuilder()
+        .parserConfig(parserConfig)
+        .defaultSchema(schema)
+        .traitDefs(traitDefs)
+        .programs(Programs.ofRules(Programs.RULE_SET))
+        .build();
+    String plan;
+    try (Planner p = Frameworks.getPlanner(config)) {
+      SqlNode n = p.parse(query);
+      n = p.validate(n);
+      RelNode r = p.rel(n).project();
+      plan = RelOptUtil.toString(r);
+      plan = Util.toLinux(plan);
+    }
     assertThat(plan,
         equalTo("LogicalSort(sort0=[$0], dir0=[ASC])\n"
         + "  LogicalProject(psPartkey=[$0])\n"

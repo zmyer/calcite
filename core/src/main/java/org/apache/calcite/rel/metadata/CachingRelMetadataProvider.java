@@ -20,7 +20,6 @@ import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.rel.RelNode;
 
 import com.google.common.base.Preconditions;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Multimap;
 
@@ -56,8 +55,8 @@ public class CachingRelMetadataProvider implements RelMetadataProvider {
 
   //~ Methods ----------------------------------------------------------------
 
-  public <M extends Metadata> UnboundMetadata<M>
-  apply(Class<? extends RelNode> relClass,
+  public <M extends Metadata> UnboundMetadata<M> apply(
+      Class<? extends RelNode> relClass,
       final Class<? extends M> metadataClass) {
     final UnboundMetadata<M> function =
         underlyingProvider.apply(relClass, metadataClass);
@@ -78,8 +77,8 @@ public class CachingRelMetadataProvider implements RelMetadataProvider {
     };
   }
 
-  public <M extends Metadata> Multimap<Method, MetadataHandler<M>>
-  handlers(MetadataDef<M> def) {
+  public <M extends Metadata> Multimap<Method, MetadataHandler<M>> handlers(
+      MetadataDef<M> def) {
     return underlyingProvider.handlers(def);
   }
 
@@ -102,7 +101,7 @@ public class CachingRelMetadataProvider implements RelMetadataProvider {
   private class CachingInvocationHandler implements InvocationHandler {
     private final Metadata metadata;
 
-    public CachingInvocationHandler(Metadata metadata) {
+    CachingInvocationHandler(Metadata metadata) {
       this.metadata = Preconditions.checkNotNull(metadata);
     }
 
@@ -141,8 +140,7 @@ public class CachingRelMetadataProvider implements RelMetadataProvider {
         }
         return result;
       } catch (InvocationTargetException e) {
-        Throwables.propagateIfPossible(e.getCause());
-        throw e;
+        throw e.getCause();
       }
     }
   }

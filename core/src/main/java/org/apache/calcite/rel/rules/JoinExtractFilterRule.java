@@ -18,11 +18,12 @@ package org.apache.calcite.rel.rules;
 
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
-import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.logical.LogicalJoin;
+import org.apache.calcite.tools.RelBuilderFactory;
 
 /**
  * Rule to convert an
@@ -43,15 +44,25 @@ public final class JoinExtractFilterRule extends RelOptRule {
 
   /** The singleton. */
   public static final JoinExtractFilterRule INSTANCE =
-      new JoinExtractFilterRule(LogicalJoin.class);
+      new JoinExtractFilterRule(LogicalJoin.class,
+          RelFactories.LOGICAL_BUILDER);
 
   //~ Constructors -----------------------------------------------------------
 
   /**
    * Creates an JoinExtractFilterRule.
    */
+  @Deprecated // to be removed before 2.0
   public JoinExtractFilterRule(Class<? extends Join> clazz) {
-    super(operand(clazz, any()));
+    this(clazz, RelFactories.LOGICAL_BUILDER);
+  }
+
+  /**
+   * Creates a JoinExtractFilterRule.
+   */
+  public JoinExtractFilterRule(Class<? extends Join> clazz,
+      RelBuilderFactory relBuilderFactory) {
+    super(operand(clazz, any()), relBuilderFactory, null);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -84,10 +95,10 @@ public final class JoinExtractFilterRule extends RelOptRule {
             join.getJoinType(),
             join.isSemiJoinDone());
 
+    final RelFactories.FilterFactory factory =
+        RelFactories.DEFAULT_FILTER_FACTORY;
     RelNode filterRel =
-        RelOptUtil.createFilter(
-            cartesianJoinRel,
-            join.getCondition());
+        factory.createFilter(cartesianJoinRel, join.getCondition());
 
     call.transformTo(filterRel);
   }

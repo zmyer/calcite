@@ -18,16 +18,20 @@ package org.apache.calcite.rel.rules;
 
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
+import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.SubstitutionVisitor;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
+import org.apache.calcite.rel.core.Aggregate.Group;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Filter;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.sql.SqlAggFunction;
+import org.apache.calcite.tools.RelBuilderFactory;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.mapping.Mappings;
 
@@ -57,9 +61,16 @@ public class AggregateFilterTransposeRule extends RelOptRule {
       new AggregateFilterTransposeRule();
 
   private AggregateFilterTransposeRule() {
-    super(
+    this(
         operand(Aggregate.class,
-            operand(Filter.class, any())));
+            operand(Filter.class, any())),
+        RelFactories.LOGICAL_BUILDER);
+  }
+
+  /** Creates an AggregateFilterTransposeRule. */
+  public AggregateFilterTransposeRule(RelOptRuleOperand operand,
+      RelBuilderFactory relBuilderFactory) {
+    super(operand, relBuilderFactory, null);
   }
 
   public void onMatch(RelOptRuleCall call) {
@@ -72,7 +83,7 @@ public class AggregateFilterTransposeRule extends RelOptRule {
     final ImmutableBitSet newGroupSet =
         aggregate.getGroupSet().union(filterColumns);
     final RelNode input = filter.getInput();
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = call.getMetadataQuery();
     final Boolean unique = mq.areColumnsUnique(input, newGroupSet);
     if (unique != null && unique) {
       // The input is already unique on the grouping columns, so there's little
@@ -97,7 +108,7 @@ public class AggregateFilterTransposeRule extends RelOptRule {
         RexUtil.apply(mapping, filter.getCondition());
     final Filter newFilter = filter.copy(filter.getTraitSet(),
         newAggregate, newCondition);
-    if (allColumnsInAggregate && !aggregate.indicator) {
+    if (allColumnsInAggregate && aggregate.getGroupType() == Group.SIMPLE) {
       // Everything needed by the filter is returned by the aggregate.
       assert newGroupSet.equals(aggregate.getGroupSet());
       call.transformTo(newFilter);
@@ -110,7 +121,7 @@ public class AggregateFilterTransposeRule extends RelOptRule {
         topGroupSet.set(newGroupSet.indexOf(c));
       }
       ImmutableList<ImmutableBitSet> newGroupingSets = null;
-      if (aggregate.indicator) {
+      if (aggregate.getGroupType() != Group.SIMPLE) {
         ImmutableList.Builder<ImmutableBitSet> newGroupingSetsBuilder =
                 ImmutableList.builder();
         for (ImmutableBitSet groupingSet : aggregate.getGroupSets()) {
@@ -138,8 +149,8 @@ public class AggregateFilterTransposeRule extends RelOptRule {
         }
         topAggCallList.add(
             AggregateCall.create(rollup, aggregateCall.isDistinct(),
-                ImmutableList.of(i++), -1, aggregateCall.type,
-                aggregateCall.name));
+                aggregateCall.isApproximate(), ImmutableList.of(i++), -1,
+                aggregateCall.type, aggregateCall.name));
       }
       final Aggregate topAggregate =
           aggregate.copy(aggregate.getTraitSet(), newFilter,

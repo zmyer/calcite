@@ -29,6 +29,7 @@ import org.apache.calcite.linq4j.tree.Expressions;
 import org.apache.calcite.linq4j.tree.ParameterExpression;
 import org.apache.calcite.linq4j.tree.Primitive;
 import org.apache.calcite.linq4j.tree.Statement;
+import org.apache.calcite.linq4j.tree.Types;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPlanner;
@@ -48,6 +49,7 @@ import org.apache.calcite.rex.RexWindowBound;
 import org.apache.calcite.runtime.SortedMultiMap;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.util.BuiltInMethod;
+import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
 
@@ -211,8 +213,7 @@ public class EnumerableWindow extends Window implements EnumerableRel {
       }
 
       // The output from this stage is the input plus the aggregate functions.
-      final RelDataTypeFactory.FieldInfoBuilder typeBuilder =
-          typeFactory.builder();
+      final RelDataTypeFactory.Builder typeBuilder = typeFactory.builder();
       typeBuilder.addAll(inputPhysType.getRowType().getFieldList());
       for (AggImpState agg : aggs) {
         typeBuilder.add(agg.call.name, agg.call.type);
@@ -276,7 +277,7 @@ public class EnumerableWindow extends Window implements EnumerableRel {
 
       final List<Expression> outputRow = new ArrayList<Expression>();
       int fieldCountWithAggResults =
-        inputPhysType.getRowType().getFieldCount();
+          inputPhysType.getRowType().getFieldCount();
       for (int i = 0; i < fieldCountWithAggResults; i++) {
         outputRow.add(
             inputPhysType.fieldReference(
@@ -520,7 +521,7 @@ public class EnumerableWindow extends Window implements EnumerableRel {
   }
 
   private Function<BlockBuilder, WinAggFrameResultContext>
-  getBlockBuilderWinAggFrameResultContextFunction(
+      getBlockBuilderWinAggFrameResultContextFunction(
       final JavaTypeFactory typeFactory, final Result result,
       final List<Expression> translatedConstants,
       final Expression comparator_,
@@ -689,15 +690,32 @@ public class EnumerableWindow extends Window implements EnumerableRel {
     final ParameterExpression v_ =
         Expressions.parameter(inputPhysType.getJavaRowType(),
             builder2.newName("v"));
-    final DeclarationStatement declare =
-        Expressions.declare(
-            0, "key",
-            inputPhysType.selector(
-                v_,
-                group.keys.asList(),
-                JavaRowFormat.CUSTOM));
-    builder2.add(declare);
-    final ParameterExpression key_ = declare.parameter;
+
+    Pair<Type, List<Expression>> selector =
+        inputPhysType.selector(v_, group.keys.asList(), JavaRowFormat.CUSTOM);
+    final ParameterExpression key_;
+    if (selector.left instanceof Types.RecordType) {
+      Types.RecordType keyJavaType = (Types.RecordType) selector.left;
+      List<Expression> initExpressions = selector.right;
+      key_ = Expressions.parameter(keyJavaType, "key");
+      builder2.add(Expressions.declare(0, key_, null));
+      builder2.add(
+          Expressions.statement(
+              Expressions.assign(key_, Expressions.new_(keyJavaType))));
+      List<Types.RecordField> fieldList = keyJavaType.getRecordFields();
+      for (int i = 0; i < initExpressions.size(); i++) {
+        Expression right = initExpressions.get(i);
+        builder2.add(
+            Expressions.statement(
+                Expressions.assign(
+                    Expressions.field(key_, fieldList.get(i)), right)));
+      }
+    } else {
+      DeclarationStatement declare =
+          Expressions.declare(0, "key", selector.right.get(0));
+      builder2.add(declare);
+      key_ = declare.parameter;
+    }
     builder2.add(
         Expressions.statement(
             Expressions.call(
@@ -770,6 +788,22 @@ public class EnumerableWindow extends Window implements EnumerableRel {
             public List<? extends RelDataType> parameterRelTypes() {
               return EnumUtils.fieldRowTypes(result.physType.getRowType(),
                   constants, agg.call.getArgList());
+            }
+
+            public List<ImmutableBitSet> groupSets() {
+              throw new UnsupportedOperationException();
+            }
+
+            public List<Integer> keyOrdinals() {
+              throw new UnsupportedOperationException();
+            }
+
+            public List<? extends RelDataType> keyRelTypes() {
+              throw new UnsupportedOperationException();
+            }
+
+            public List<? extends Type> keyTypes() {
+              throw new UnsupportedOperationException();
             }
           };
       String aggName = "a" + agg.aggIdx;

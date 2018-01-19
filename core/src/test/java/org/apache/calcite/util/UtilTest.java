@@ -30,7 +30,8 @@ import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.Resources;
 import org.apache.calcite.runtime.SqlFunctions;
 import org.apache.calcite.runtime.Utilities;
-import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlCollation;
+import org.apache.calcite.sql.dialect.CalciteSqlDialect;
 import org.apache.calcite.sql.util.SqlBuilder;
 import org.apache.calcite.sql.util.SqlString;
 import org.apache.calcite.test.DiffTestCase;
@@ -51,18 +52,21 @@ import java.io.StringWriter;
 import java.io.UnsupportedEncodingException;
 import java.lang.management.MemoryType;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -214,7 +218,7 @@ public class UtilTest {
             new String(bytes1, "EUC-JP"),
             0));
     byte[] bytes2 = {
-      64, 32, 43, -45, -23, 0, 43, 54, 119, -32, -56, -34
+        64, 32, 43, -45, -23, 0, 43, 54, 119, -32, -56, -34
     };
     assertEquals(
         "ID$0$_30c__3617__2117__2d15__7fde__a48f_",
@@ -371,24 +375,24 @@ public class UtilTest {
    */
   @Test public void testCastingList() {
     final List<Number> numberList = new ArrayList<>();
-    numberList.add(new Integer(1));
+    numberList.add(1);
     numberList.add(null);
-    numberList.add(new Integer(2));
+    numberList.add(2);
     List<Integer> integerList = Util.cast(numberList, Integer.class);
     assertEquals(3, integerList.size());
-    assertEquals(new Integer(2), integerList.get(2));
+    assertEquals(Integer.valueOf(2), integerList.get(2));
 
     // Nulls are OK.
     assertNull(integerList.get(1));
 
     // Can update the underlying list.
     integerList.set(1, 345);
-    assertEquals(new Integer(345), integerList.get(1));
+    assertEquals(Integer.valueOf(345), integerList.get(1));
     integerList.set(1, null);
     assertNull(integerList.get(1));
 
     // Can add a member of the wrong type to the underlying list.
-    numberList.add(new Double(3.1415));
+    numberList.add(3.1415D);
     assertEquals(4, integerList.size());
 
     // Access a member which is of the wrong type.
@@ -534,19 +538,19 @@ public class UtilTest {
    */
   @Test public void testDiffLines() {
     String[] before = {
-      "Get a dose of her in jackboots and kilt",
-      "She's killer-diller when she's dressed to the hilt",
-      "She's the kind of a girl that makes The News of The World",
-      "Yes you could say she was attractively built.",
-      "Yeah yeah yeah."
+        "Get a dose of her in jackboots and kilt",
+        "She's killer-diller when she's dressed to the hilt",
+        "She's the kind of a girl that makes The News of The World",
+        "Yes you could say she was attractively built.",
+        "Yeah yeah yeah."
     };
     String[] after = {
-      "Get a dose of her in jackboots and kilt",
-      "(they call her \"Polythene Pam\")",
-      "She's killer-diller when she's dressed to the hilt",
-      "She's the kind of a girl that makes The Sunday Times",
-      "seem more interesting.",
-      "Yes you could say she was attractively built."
+        "Get a dose of her in jackboots and kilt",
+        "(they call her \"Polythene Pam\")",
+        "She's killer-diller when she's dressed to the hilt",
+        "She's the kind of a girl that makes The Sunday Times",
+        "seem more interesting.",
+        "Yes you could say she was attractively built."
     };
     String diff =
         DiffTestCase.diffLines(
@@ -651,7 +655,7 @@ public class UtilTest {
    * Tests SQL builders.
    */
   @Test public void testSqlBuilder() {
-    final SqlBuilder buf = new SqlBuilder(SqlDialect.CALCITE);
+    final SqlBuilder buf = new SqlBuilder(CalciteSqlDialect.DEFAULT);
     assertEquals(0, buf.length());
     buf.append("select ");
     assertEquals("select ", buf.getSql());
@@ -664,7 +668,7 @@ public class UtilTest {
     assertEquals("select \"x\", \"y\".\"a b\"", buf.getSql());
 
     final SqlString sqlString = buf.toSqlString();
-    assertEquals(SqlDialect.CALCITE, sqlString.getDialect());
+    assertEquals(CalciteSqlDialect.DEFAULT, sqlString.getDialect());
     assertEquals(buf.getSql(), sqlString.getSql());
 
     assertTrue(buf.getSql().length() > 0);
@@ -762,10 +766,10 @@ public class UtilTest {
    */
   @Test public void testTemplate() {
     // Regular java message format.
-    assertEquals(
-        "Hello, world, what a nice day.",
-        MessageFormat.format(
-            "Hello, {0}, what a nice {1}.", "world", "day"));
+    assertThat(
+        new MessageFormat("Hello, {0}, what a nice {1}.", Locale.ROOT)
+            .format(new Object[]{"world", "day"}),
+        is("Hello, world, what a nice day."));
 
     // Our extended message format. First, just strings.
     final HashMap<Object, Object> map = new HashMap<>();
@@ -829,18 +833,18 @@ public class UtilTest {
    */
   @Test public void testParseLocale() {
     Locale[] locales = {
-      Locale.CANADA,
-      Locale.CANADA_FRENCH,
-      Locale.getDefault(),
-      Locale.US,
-      Locale.TRADITIONAL_CHINESE,
+        Locale.CANADA,
+        Locale.CANADA_FRENCH,
+        Locale.getDefault(),
+        Locale.US,
+        Locale.TRADITIONAL_CHINESE,
     };
     for (Locale locale : locales) {
       assertEquals(locale, Util.parseLocale(locale.toString()));
     }
     // Example locale names in Locale.toString() javadoc.
     String[] localeNames = {
-      "en", "de_DE", "_GB", "en_US_WIN", "de__POSIX", "fr__MAC"
+        "en", "de_DE", "_GB", "en_US_WIN", "de__POSIX", "fr__MAC"
     };
     for (String localeName : localeNames) {
       assertEquals(localeName, Util.parseLocale(localeName).toString());
@@ -1285,6 +1289,23 @@ public class UtilTest {
     assertFalse(Util.isDistinct(Arrays.asList("a", null, "b", null)));
   }
 
+  /** Unit test for
+   * {@link Util#intersects(java.util.Collection, java.util.Collection)}. */
+  @Test public void testIntersects() {
+    final List<String> empty = Collections.emptyList();
+    final List<String> listA = Collections.singletonList("a");
+    final List<String> listC = Collections.singletonList("c");
+    final List<String> listD = Collections.singletonList("d");
+    final List<String> listAbc = Arrays.asList("a", "b", "c");
+    assertThat(Util.intersects(empty, listA), is(false));
+    assertThat(Util.intersects(empty, empty), is(false));
+    assertThat(Util.intersects(listA, listAbc), is(true));
+    assertThat(Util.intersects(listAbc, listAbc), is(true));
+    assertThat(Util.intersects(listAbc, listC), is(true));
+    assertThat(Util.intersects(listAbc, listD), is(false));
+    assertThat(Util.intersects(listC, listD), is(false));
+  }
+
   /**
    * Unit test for {@link org.apache.calcite.util.JsonBuilder}.
    */
@@ -1440,6 +1461,35 @@ public class UtilTest {
     }
   }
 
+  /** Unit test for {@link Util#distinctList(List)}
+   * and {@link Util#distinctList(Iterable)}. */
+  @Test public void testDistinctList() {
+    assertThat(Util.distinctList(Arrays.asList(1, 2)), is(Arrays.asList(1, 2)));
+    assertThat(Util.distinctList(Arrays.asList(1, 2, 1)),
+        is(Arrays.asList(1, 2)));
+    try {
+      List<Object> o = Util.distinctList(null);
+      fail("expected exception, got " + o);
+    } catch (NullPointerException ignore) {
+    }
+    final List<Integer> empty = ImmutableList.of();
+    assertThat(Util.distinctList(empty), sameInstance(empty));
+    final Iterable<Integer> emptyIterable = empty;
+    assertThat(Util.distinctList(emptyIterable), sameInstance(emptyIterable));
+    final List<Integer> empty2 = ImmutableList.of();
+    assertThat(Util.distinctList(empty2), sameInstance(empty2));
+    final List<String> abc = ImmutableList.of("a", "b", "c");
+    assertThat(Util.distinctList(abc), sameInstance(abc));
+    final List<String> a = ImmutableList.of("a");
+    assertThat(Util.distinctList(a), sameInstance(a));
+    final List<String> cbca = ImmutableList.of("c", "b", "c", "a");
+    assertThat(Util.distinctList(cbca), not(sameInstance(cbca)));
+    assertThat(Util.distinctList(cbca), is(Arrays.asList("c", "b", "a")));
+    final Collection<String> cbcaC = new LinkedHashSet<>(cbca);
+    assertThat(Util.distinctList(cbcaC), not(sameInstance(cbca)));
+    assertThat(Util.distinctList(cbcaC), is(Arrays.asList("c", "b", "a")));
+  }
+
   /** Unit test for {@link Utilities#hashCode(double)}. */
   @Test public void testHash() {
     checkHash(0d);
@@ -1453,11 +1503,12 @@ public class UtilTest {
   }
 
   public void checkHash(double v) {
-    assertThat(new Double(v).hashCode(), is(Utilities.hashCode(v)));
+    assertThat(Double.valueOf(v).hashCode(), is(Utilities.hashCode(v)));
     final long long_ = (long) v;
-    assertThat(new Long(long_).hashCode(), is(Utilities.hashCode(long_)));
+    assertThat(Long.valueOf(long_).hashCode(), is(Utilities.hashCode(long_)));
     final float float_ = (float) v;
-    assertThat(new Float(float_).hashCode(), is(Utilities.hashCode(float_)));
+    assertThat(Float.valueOf(float_).hashCode(),
+        is(Utilities.hashCode(float_)));
     final boolean boolean_ = v != 0;
     assertThat(Boolean.valueOf(boolean_).hashCode(),
         is(Utilities.hashCode(boolean_)));
@@ -1480,6 +1531,16 @@ public class UtilTest {
 
   @Test public void testResources() {
     Resources.validate(Static.RESOURCE);
+    checkResourceMethodNames(Static.RESOURCE);
+  }
+
+  private void checkResourceMethodNames(Object resource) {
+    for (Method method : resource.getClass().getMethods()) {
+      if (!Modifier.isStatic(method.getModifiers())
+          && !method.getName().matches("^[a-z][A-Za-z0-9_]*$")) {
+        fail("resource method name must be camel case: " + method.getName());
+      }
+    }
   }
 
   /** Tests that sorted sets behave the way we expect. */
@@ -1495,8 +1556,8 @@ public class UtilTest {
 
     final Comparator<String> comparator = new Comparator<String>() {
       public int compare(String o1, String o2) {
-        String u1 = o1.toUpperCase();
-        String u2 = o2.toUpperCase();
+        String u1 = o1.toUpperCase(Locale.ROOT);
+        String u2 = o2.toUpperCase(Locale.ROOT);
         int c = u1.compareTo(u2);
         if (c == 0) {
           c = o1.compareTo(o2);
@@ -1527,7 +1588,8 @@ public class UtilTest {
   }
 
   private NavigableSet<String> checkNav(NavigableSet<String> set, String s) {
-    return set.subSet(s.toUpperCase(), true, s.toLowerCase(), true);
+    return set.subSet(s.toUpperCase(Locale.ROOT), true,
+        s.toLowerCase(Locale.ROOT), true);
   }
 
   /** Test for {@link org.apache.calcite.util.ImmutableNullableList}. */
@@ -1682,12 +1744,48 @@ public class UtilTest {
 
   }
 
+  /** Tests {@link Util#immutableCopy(Iterable)}. */
+  @Test public void testImmutableCopy() {
+    final List<Integer> list3 = Arrays.asList(1, 2, 3);
+    final List<Integer> immutableList3 = ImmutableList.copyOf(list3);
+    final List<Integer> list0 = Arrays.asList();
+    final List<Integer> immutableList0 = ImmutableList.copyOf(list0);
+    final List<Integer> list1 = Arrays.asList(1);
+    final List<Integer> immutableList1 = ImmutableList.copyOf(list1);
+
+    final List<List<Integer>> list301 = Arrays.asList(list3, list0, list1);
+    final List<List<Integer>> immutableList301 = Util.immutableCopy(list301);
+    assertThat(immutableList301.size(), is(3));
+    assertThat(immutableList301, is(list301));
+    assertThat(immutableList301, not(sameInstance(list301)));
+    for (List<Integer> list : immutableList301) {
+      assertThat(list, isA((Class) ImmutableList.class));
+    }
+
+    // if you copy the copy, you get the same instance
+    final List<List<Integer>> immutableList301b =
+        Util.immutableCopy(immutableList301);
+    assertThat(immutableList301b, sameInstance(immutableList301));
+    assertThat(immutableList301b, not(sameInstance(list301)));
+
+    // if the elements of the list are immutable lists, they are not copied
+    final List<List<Integer>> list301c =
+        Arrays.asList(immutableList3, immutableList0, immutableList1);
+    final List<List<Integer>> list301d = Util.immutableCopy(list301c);
+    assertThat(list301d.size(), is(3));
+    assertThat(list301d, is(list301));
+    assertThat(list301d, not(sameInstance(list301)));
+    assertThat(list301d.get(0), sameInstance(immutableList3));
+    assertThat(list301d.get(1), sameInstance(immutableList0));
+    assertThat(list301d.get(2), sameInstance(immutableList1));
+  }
+
   @Test public void testAsIndexView() {
     final List<String> values  = Lists.newArrayList("abCde", "X", "y");
     final Map<String, String> map = Util.asIndexMap(values,
         new Function<String, String>() {
           public String apply(@Nullable String input) {
-            return input.toUpperCase();
+            return input.toUpperCase(Locale.ROOT);
           }
         });
     assertThat(map.size(), equalTo(values.size()));
@@ -1817,6 +1915,165 @@ public class UtilTest {
     } else {
       return litmus.succeed();
     }
+  }
+
+  /** Unit test for {@link org.apache.calcite.util.NameSet}. */
+  @Test public void testNameSet() {
+    final NameSet names = new NameSet();
+    assertThat(names.contains("foo", true), is(false));
+    assertThat(names.contains("foo", false), is(false));
+    names.add("baz");
+    assertThat(names.contains("foo", true), is(false));
+    assertThat(names.contains("foo", false), is(false));
+    assertThat(names.contains("baz", true), is(true));
+    assertThat(names.contains("baz", false), is(true));
+    assertThat(names.contains("BAZ", true), is(false));
+    assertThat(names.contains("BAZ", false), is(true));
+    assertThat(names.contains("bAz", false), is(true));
+    assertThat(names.range("baz", true).size(), is(1));
+    assertThat(names.range("baz", false).size(), is(1));
+    assertThat(names.range("BAZ", true).size(), is(0));
+    assertThat(names.range("BaZ", true).size(), is(0));
+    assertThat(names.range("BaZ", false).size(), is(1));
+    assertThat(names.range("BAZ", false).size(), is(1));
+
+    assertThat(names.contains("bAzinga", false), is(false));
+    assertThat(names.range("bAzinga", true).size(), is(0));
+    assertThat(names.range("bAzinga", false).size(), is(0));
+
+    assertThat(names.contains("zoo", true), is(false));
+    assertThat(names.contains("zoo", false), is(false));
+    assertThat(names.range("zoo", true).size(), is(0));
+
+    assertThat(Iterables.size(names.iterable()), is(1));
+    names.add("Baz");
+    names.add("Abcde");
+    names.add("Zymurgy");
+    assertThat(Iterables.size(names.iterable()), is(4));
+    assertThat(names.range("baz", false).size(), is(2));
+    assertThat(names.range("baz", true).size(), is(1));
+    assertThat(names.range("BAZ", true).size(), is(0));
+    assertThat(names.range("Baz", true).size(), is(1));
+  }
+
+  /** Unit test for {@link org.apache.calcite.util.NameMap}. */
+  @Test public void testNameMap() {
+    final NameMap<Integer> map = new NameMap<>();
+    assertThat(map.containsKey("foo", true), is(false));
+    assertThat(map.containsKey("foo", false), is(false));
+    map.put("baz", 0);
+    assertThat(map.containsKey("foo", true), is(false));
+    assertThat(map.containsKey("foo", false), is(false));
+    assertThat(map.containsKey("baz", true), is(true));
+    assertThat(map.containsKey("baz", false), is(true));
+    assertThat(map.containsKey("BAZ", true), is(false));
+    assertThat(map.containsKey("BAZ", false), is(true));
+    assertThat(map.containsKey("bAz", false), is(true));
+    assertThat(map.range("baz", true).size(), is(1));
+    assertThat(map.range("baz", false).size(), is(1));
+    assertThat(map.range("BAZ", true).size(), is(0));
+    assertThat(map.range("BaZ", true).size(), is(0));
+    assertThat(map.range("BaZ", false).size(), is(1));
+    assertThat(map.range("BAZ", false).size(), is(1));
+
+    assertThat(map.containsKey("bAzinga", false), is(false));
+    assertThat(map.range("bAzinga", true).size(), is(0));
+    assertThat(map.range("bAzinga", false).size(), is(0));
+
+    assertThat(map.containsKey("zoo", true), is(false));
+    assertThat(map.containsKey("zoo", false), is(false));
+    assertThat(map.range("zoo", true).size(), is(0));
+
+    assertThat(map.map().size(), is(1));
+    map.put("Baz", 1);
+    map.put("Abcde", 2);
+    map.put("Zymurgy", 3);
+    assertThat(map.map().size(), is(4));
+    assertThat(map.map().entrySet().size(), is(4));
+    assertThat(map.map().keySet().size(), is(4));
+    assertThat(map.range("baz", false).size(), is(2));
+    assertThat(map.range("baz", true).size(), is(1));
+    assertThat(map.range("BAZ", true).size(), is(0));
+    assertThat(map.range("Baz", true).size(), is(1));
+  }
+
+  /** Unit test for {@link org.apache.calcite.util.NameMultimap}. */
+  @Test public void testNameMultimap() {
+    final NameMultimap<Integer> map = new NameMultimap<>();
+    assertThat(map.containsKey("foo", true), is(false));
+    assertThat(map.containsKey("foo", false), is(false));
+    map.put("baz", 0);
+    map.put("baz", 0);
+    map.put("BAz", 0);
+    assertThat(map.containsKey("foo", true), is(false));
+    assertThat(map.containsKey("foo", false), is(false));
+    assertThat(map.containsKey("baz", true), is(true));
+    assertThat(map.containsKey("baz", false), is(true));
+    assertThat(map.containsKey("BAZ", true), is(false));
+    assertThat(map.containsKey("BAZ", false), is(true));
+    assertThat(map.containsKey("bAz", false), is(true));
+    assertThat(map.range("baz", true).size(), is(2));
+    assertThat(map.range("baz", false).size(), is(3));
+    assertThat(map.range("BAZ", true).size(), is(0));
+    assertThat(map.range("BaZ", true).size(), is(0));
+    assertThat(map.range("BaZ", false).size(), is(3));
+    assertThat(map.range("BAZ", false).size(), is(3));
+
+    assertThat(map.containsKey("bAzinga", false), is(false));
+    assertThat(map.range("bAzinga", true).size(), is(0));
+    assertThat(map.range("bAzinga", false).size(), is(0));
+
+    assertThat(map.containsKey("zoo", true), is(false));
+    assertThat(map.containsKey("zoo", false), is(false));
+    assertThat(map.range("zoo", true).size(), is(0));
+
+    assertThat(map.map().size(), is(2));
+    map.put("Baz", 1);
+    map.put("Abcde", 2);
+    map.put("Zymurgy", 3);
+    assertThat(map.map().size(), is(5));
+    assertThat(map.map().entrySet().size(), is(5));
+    assertThat(map.map().keySet().size(), is(5));
+    assertThat(map.range("baz", false).size(), is(4));
+    assertThat(map.range("baz", true).size(), is(2));
+    assertThat(map.range("BAZ", true).size(), is(0));
+    assertThat(map.range("Baz", true).size(), is(1));
+  }
+
+  @Test public void testNlsStringClone() {
+    final NlsString s = new NlsString("foo", "LATIN1", SqlCollation.IMPLICIT);
+    assertThat(s.toString(), is("_LATIN1'foo'"));
+    final Object s2 = s.clone();
+    assertThat(s2, instanceOf(NlsString.class));
+    assertThat(s2, not(sameInstance((Object) s)));
+    assertThat(s2.toString(), is(s.toString()));
+  }
+
+  @Test public void testXmlOutput() {
+    final StringWriter w = new StringWriter();
+    final XmlOutput o = new XmlOutput(w);
+    o.beginBeginTag("root");
+    o.attribute("a1", "v1");
+    o.attribute("a2", null);
+    o.endBeginTag("root");
+    o.beginTag("someText", null);
+    o.content("line 1 followed by empty line\n"
+        + "\n"
+        + "line 3 with windows line ending\r\n"
+        + "line 4 with no ending");
+    o.endTag("someText");
+    o.endTag("root");
+    final String s = w.toString();
+    final String expected = ""
+        + "<root a1=\"v1\">\n"
+        + "\t<someText>\n"
+        + "\t\t\tline 1 followed by empty line\n"
+        + "\t\t\t\n"
+        + "\t\t\tline 3 with windows line ending\n"
+        + "\t\t\tline 4 with no ending\n"
+        + "\t</someText>\n"
+        + "</root>\n";
+    assertThat(Util.toLinux(s), is(expected));
   }
 }
 

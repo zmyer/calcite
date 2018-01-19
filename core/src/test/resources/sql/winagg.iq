@@ -42,6 +42,51 @@ order by sum1, sum2;
 
 !ok
 
+# [CALCITE-1540] Support multiple columns in PARTITION BY clause of window function
+select gender,deptno,
+  count(*) over (partition by gender,deptno) as count1
+from emp;
+
++--------+--------+--------+
+| GENDER | DEPTNO | COUNT1 |
++--------+--------+--------+
+| F      |     10 |      1 |
+| F      |     30 |      2 |
+| F      |     30 |      2 |
+| F      |     50 |      1 |
+| F      |     60 |      1 |
+| F      |        |      1 |
+| M      |     10 |      1 |
+| M      |     20 |      1 |
+| M      |     50 |      1 |
++--------+--------+--------+
+(9 rows)
+
+!ok
+
+# Partition by same column twice.
+# (It's degenerate, but I believe it's valid SQL.)
+select gender,deptno,
+  count(*) over (partition by gender,gender) as count1
+from emp;
+
++--------+--------+--------+
+| GENDER | DEPTNO | COUNT1 |
++--------+--------+--------+
+| F      |     10 |      6 |
+| F      |     30 |      6 |
+| F      |     30 |      6 |
+| F      |     50 |      6 |
+| F      |     60 |      6 |
+| F      |        |      6 |
+| M      |     10 |      3 |
+| M      |     20 |      3 |
+| M      |     50 |      3 |
++--------+--------+--------+
+(9 rows)
+
+!ok
+
 !if (false) {
 select *, first_value(deptno) over () from emp;
  ename | deptno | gender | first_value
@@ -333,6 +378,29 @@ group by deptno, ename;
 | 30 | 8 | Susan |
 +----+---+-------+
 (9 rows)
+
+!ok
+
+# Window function on top of regular aggregate in partitioning or order clause.
+select deptno, gender, min(ename) as x, sum(deptno) as y,
+  rank() over (partition by gender order by min(ename)) as r,
+  sum(sum(deptno)) over (partition by gender order by min(ename)) as s
+from emp
+group by deptno, gender
+order by gender, r;
++--------+--------+-------+----+---+-----+
+| DEPTNO | GENDER | X     | Y  | R | S   |
++--------+--------+-------+----+---+-----+
+|     30 | F      | Alice | 60 | 1 |  60 |
+|     50 | F      | Eve   | 50 | 2 | 110 |
+|     60 | F      | Grace | 60 | 3 | 170 |
+|     10 | F      | Jane  | 10 | 4 | 180 |
+|        | F      | Wilma |    | 5 | 180 |
+|     50 | M      | Adam  | 50 | 1 |  50 |
+|     10 | M      | Bob   | 10 | 2 |  60 |
+|     20 | M      | Eric  | 20 | 3 |  80 |
++--------+--------+-------+----+---+-----+
+(8 rows)
 
 !ok
 

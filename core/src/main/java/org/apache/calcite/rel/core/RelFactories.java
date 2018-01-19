@@ -27,6 +27,7 @@ import org.apache.calcite.rel.logical.LogicalCorrelate;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalIntersect;
 import org.apache.calcite.rel.logical.LogicalJoin;
+import org.apache.calcite.rel.logical.LogicalMatch;
 import org.apache.calcite.rel.logical.LogicalMinus;
 import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.logical.LogicalSort;
@@ -46,7 +47,9 @@ import org.apache.calcite.util.ImmutableBitSet;
 import com.google.common.collect.ImmutableList;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.SortedSet;
 
 /**
  * Contains factory interface and default implementation for creating various
@@ -68,10 +71,13 @@ public class RelFactories {
       new SemiJoinFactoryImpl();
 
   public static final SortFactory DEFAULT_SORT_FACTORY =
-    new SortFactoryImpl();
+      new SortFactoryImpl();
 
   public static final AggregateFactory DEFAULT_AGGREGATE_FACTORY =
-    new AggregateFactoryImpl();
+      new AggregateFactoryImpl();
+
+  public static final MatchFactory DEFAULT_MATCH_FACTORY =
+      new MatchFactoryImpl();
 
   public static final SetOpFactory DEFAULT_SET_OP_FACTORY =
       new SetOpFactoryImpl();
@@ -92,6 +98,7 @@ public class RelFactories {
               DEFAULT_SEMI_JOIN_FACTORY,
               DEFAULT_SORT_FACTORY,
               DEFAULT_AGGREGATE_FACTORY,
+              DEFAULT_MATCH_FACTORY,
               DEFAULT_SET_OP_FACTORY,
               DEFAULT_VALUES_FACTORY,
               DEFAULT_TABLE_SCAN_FACTORY));
@@ -199,6 +206,7 @@ public class RelFactories {
    * that returns a vanilla {@link LogicalAggregate}.
    */
   private static class AggregateFactoryImpl implements AggregateFactory {
+    @SuppressWarnings("deprecation")
     public RelNode createAggregate(RelNode input, boolean indicator,
         ImmutableBitSet groupSet, ImmutableList<ImmutableBitSet> groupSets,
         List<AggregateCall> aggCalls) {
@@ -379,6 +387,37 @@ public class RelFactories {
   private static class TableScanFactoryImpl implements TableScanFactory {
     public RelNode createScan(RelOptCluster cluster, RelOptTable table) {
       return LogicalTableScan.create(cluster, table);
+    }
+  }
+
+  /**
+   * Can create a {@link Match} of
+   * the appropriate type for a rule's calling convention.
+   */
+  public interface MatchFactory {
+    /** Creates a {@link Match}. */
+    RelNode createMatch(RelNode input, RexNode pattern,
+        RelDataType rowType, boolean strictStart, boolean strictEnd,
+        Map<String, RexNode> patternDefinitions, Map<String, RexNode> measures,
+        RexNode after, Map<String, ? extends SortedSet<String>> subsets,
+        boolean allRows, List<RexNode> partitionKeys, RelCollation orderKeys,
+        RexNode interval);
+  }
+
+  /**
+   * Implementation of {@link MatchFactory}
+   * that returns a {@link LogicalMatch}.
+   */
+  private static class MatchFactoryImpl implements MatchFactory {
+    public RelNode createMatch(RelNode input, RexNode pattern,
+        RelDataType rowType, boolean strictStart, boolean strictEnd,
+        Map<String, RexNode> patternDefinitions, Map<String, RexNode> measures,
+        RexNode after, Map<String, ? extends SortedSet<String>> subsets,
+        boolean allRows, List<RexNode> partitionKeys, RelCollation orderKeys,
+        RexNode interval) {
+      return LogicalMatch.create(input, rowType, pattern, strictStart,
+          strictEnd, patternDefinitions, measures, after, subsets, allRows,
+          partitionKeys, orderKeys, interval);
     }
   }
 }

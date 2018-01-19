@@ -17,9 +17,12 @@
 package org.apache.calcite.sql.parser;
 
 import org.apache.calcite.avatica.util.Casing;
+import org.apache.calcite.avatica.util.DateTimeUtils;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.runtime.CalciteContextException;
+import org.apache.calcite.runtime.PredicateImpl;
 import org.apache.calcite.sql.SqlBinaryOperator;
+import org.apache.calcite.sql.SqlDateLiteral;
 import org.apache.calcite.sql.SqlIntervalLiteral;
 import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlKind;
@@ -31,12 +34,19 @@ import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlPostfixOperator;
 import org.apache.calcite.sql.SqlPrefixOperator;
 import org.apache.calcite.sql.SqlSpecialOperator;
+import org.apache.calcite.sql.SqlTimeLiteral;
+import org.apache.calcite.sql.SqlTimestampLiteral;
+import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.util.DateString;
 import org.apache.calcite.util.PrecedenceClimbingParser;
 import org.apache.calcite.util.SaffronProperties;
+import org.apache.calcite.util.TimeString;
+import org.apache.calcite.util.TimestampString;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.trace.CalciteTrace;
 
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 
 import org.slf4j.Logger;
@@ -44,8 +54,10 @@ import org.slf4j.Logger;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.Charset;
+import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.List;
 import java.util.Locale;
 import java.util.StringTokenizer;
@@ -76,7 +88,7 @@ public final class SqlParserUtil {
       return null;
     }
     if (Character.toUpperCase(s.charAt(0)) == 'N') {
-      return SaffronProperties.instance().defaultNationalCharset.get();
+      return SaffronProperties.INSTANCE.defaultNationalCharset().get();
     }
     int i = s.indexOf("'");
     return s.substring(1, i); // skip prefixed '_'
@@ -127,13 +139,70 @@ public final class SqlParserUtil {
     return java.sql.Timestamp.valueOf(s);
   }
 
+  public static SqlDateLiteral parseDateLiteral(String s, SqlParserPos pos) {
+    final String dateStr = parseString(s);
+    final Calendar cal =
+        DateTimeUtils.parseDateFormat(dateStr, Format.PER_THREAD.get().date,
+            DateTimeUtils.UTC_ZONE);
+    if (cal == null) {
+      throw SqlUtil.newContextException(pos,
+          RESOURCE.illegalLiteral("DATE", s,
+              RESOURCE.badFormat(DateTimeUtils.DATE_FORMAT_STRING).str()));
+    }
+    final DateString d = DateString.fromCalendarFields(cal);
+    return SqlLiteral.createDate(d, pos);
+  }
+
+  public static SqlTimeLiteral parseTimeLiteral(String s, SqlParserPos pos) {
+    final String dateStr = parseString(s);
+    final DateTimeUtils.PrecisionTime pt =
+        DateTimeUtils.parsePrecisionDateTimeLiteral(dateStr,
+            Format.PER_THREAD.get().time, DateTimeUtils.UTC_ZONE, -1);
+    if (pt == null) {
+      throw SqlUtil.newContextException(pos,
+          RESOURCE.illegalLiteral("TIME", s,
+              RESOURCE.badFormat(DateTimeUtils.TIME_FORMAT_STRING).str()));
+    }
+    final TimeString t = TimeString.fromCalendarFields(pt.getCalendar())
+        .withFraction(pt.getFraction());
+    return SqlLiteral.createTime(t, pt.getPrecision(), pos);
+  }
+
+  public static SqlTimestampLiteral parseTimestampLiteral(String s,
+      SqlParserPos pos) {
+    final String dateStr = parseString(s);
+    final DateTimeUtils.PrecisionTime pt =
+        DateTimeUtils.parsePrecisionDateTimeLiteral(dateStr,
+            Format.PER_THREAD.get().timestamp, DateTimeUtils.UTC_ZONE, -1);
+    if (pt == null) {
+      throw SqlUtil.newContextException(pos,
+          RESOURCE.illegalLiteral("TIMESTAMP", s,
+              RESOURCE.badFormat(DateTimeUtils.TIMESTAMP_FORMAT_STRING).str()));
+    }
+    final TimestampString ts =
+        TimestampString.fromCalendarFields(pt.getCalendar())
+            .withFraction(pt.getFraction());
+    return SqlLiteral.createTimestamp(ts, pt.getPrecision(), pos);
+  }
+
+  public static SqlIntervalLiteral parseIntervalLiteral(SqlParserPos pos,
+      int sign, String s, SqlIntervalQualifier intervalQualifier) {
+    final String intervalStr = parseString(s);
+    if (intervalStr.equals("")) {
+      throw SqlUtil.newContextException(pos,
+          RESOURCE.illegalIntervalLiteral(s + " "
+              + intervalQualifier.toString(), pos.toString()));
+    }
+    return SqlLiteral.createInterval(sign, intervalStr, intervalQualifier, pos);
+  }
+
   /**
    * Checks if the date/time format is valid
    *
    * @param pattern {@link SimpleDateFormat}  pattern
    */
   public static void checkDateFormat(String pattern) {
-    SimpleDateFormat df = new SimpleDateFormat(pattern);
+    SimpleDateFormat df = new SimpleDateFormat(pattern, Locale.ROOT);
     Util.discard(df);
   }
 
@@ -154,8 +223,7 @@ public final class SqlParserUtil {
   public static long intervalToMillis(
       String literal,
       SqlIntervalQualifier intervalQualifier) {
-    Util.permAssert(
-        !intervalQualifier.isYearMonth(),
+    Preconditions.checkArgument(!intervalQualifier.isYearMonth(),
         "interval must be day time");
     int[] ret;
     try {
@@ -163,8 +231,8 @@ public final class SqlParserUtil {
           intervalQualifier.getParserPosition(), RelDataTypeSystem.DEFAULT);
       assert ret != null;
     } catch (CalciteContextException e) {
-      throw Util.newInternal(
-          e, "while parsing day-to-second interval " + literal);
+      throw new RuntimeException("while parsing day-to-second interval "
+          + literal, e);
     }
     long l = 0;
     long[] conv = new long[5];
@@ -196,8 +264,7 @@ public final class SqlParserUtil {
   public static long intervalToMonths(
       String literal,
       SqlIntervalQualifier intervalQualifier) {
-    Util.permAssert(
-        intervalQualifier.isYearMonth(),
+    Preconditions.checkArgument(intervalQualifier.isYearMonth(),
         "interval must be year month");
     int[] ret;
     try {
@@ -205,8 +272,8 @@ public final class SqlParserUtil {
           intervalQualifier.getParserPosition(), RelDataTypeSystem.DEFAULT);
       assert ret != null;
     } catch (CalciteContextException e) {
-      throw Util.newInternal(
-          e, "error parsing year-to-month interval " + literal);
+      throw new RuntimeException("Error while parsing year-to-month interval "
+          + literal, e);
     }
 
     long l = 0;
@@ -279,9 +346,9 @@ public final class SqlParserUtil {
     }
     switch (casing) {
     case TO_UPPER:
-      return s.toUpperCase();
+      return s.toUpperCase(Locale.ROOT);
     case TO_LOWER:
-      return s.toLowerCase();
+      return s.toLowerCase(Locale.ROOT);
     default:
       return s;
     }
@@ -484,7 +551,7 @@ public final class SqlParserUtil {
       strength = st.nextToken();
     } else {
       strength =
-          SaffronProperties.instance().defaultCollationStrength.get();
+          SaffronProperties.INSTANCE.defaultCollationStrength().get();
     }
 
     Charset charset = Charset.forName(charsetStr);
@@ -541,8 +608,8 @@ public final class SqlParserUtil {
       int start,
       int end,
       T o) {
-    Util.pre(list != null, "list != null");
-    Util.pre(start < end, "start < end");
+    Preconditions.checkNotNull(list);
+    Preconditions.checkArgument(start < end);
     for (int i = end - 1; i > start; --i) {
       list.remove(i);
     }
@@ -585,8 +652,8 @@ public final class SqlParserUtil {
   public static SqlNode toTreeEx(SqlSpecialOperator.TokenSequence list,
       int start, final int minPrec, final SqlKind stopperKind) {
     final Predicate<PrecedenceClimbingParser.Token> predicate =
-        new Predicate<PrecedenceClimbingParser.Token>() {
-          public boolean apply(PrecedenceClimbingParser.Token t) {
+        new PredicateImpl<PrecedenceClimbingParser.Token>() {
+          public boolean test(PrecedenceClimbingParser.Token t) {
             if (t instanceof PrecedenceClimbingParser.Op) {
               final SqlOperator op = ((ToTreeListItem) t.o).op;
               return stopperKind != SqlKind.OTHER
@@ -734,8 +801,9 @@ public final class SqlParserUtil {
     }
   }
 
-  /** Implementation of {@link SqlSpecialOperator.TokenSequence} based on an
-   * existing parser. */
+  /** Implementation of
+   * {@link org.apache.calcite.sql.SqlSpecialOperator.TokenSequence}
+   * based on an existing parser. */
   private static class TokenSequenceImpl
       implements SqlSpecialOperator.TokenSequence {
     final List<PrecedenceClimbingParser.Token> list;
@@ -793,7 +861,8 @@ public final class SqlParserUtil {
     }
   }
 
-  /** Implementation of {@link SqlSpecialOperator.TokenSequence}. */
+  /** Implementation of
+   * {@link org.apache.calcite.sql.SqlSpecialOperator.TokenSequence}. */
   private static class OldTokenSequenceImpl
       implements SqlSpecialOperator.TokenSequence {
     final List<Object> list;
@@ -872,6 +941,24 @@ public final class SqlParserUtil {
     public void replaceSublist(int start, int end, SqlNode e) {
       SqlParserUtil.replaceSublist(list, start, end, e);
     }
+  }
+
+  /** Pre-initialized {@link DateFormat} objects, to be used within the current
+   * thread, because {@code DateFormat} is not thread-safe. */
+  private static class Format {
+    private static final ThreadLocal<Format> PER_THREAD =
+        new ThreadLocal<Format>() {
+          @Override protected Format initialValue() {
+            return new Format();
+          }
+        };
+    final DateFormat timestamp =
+        new SimpleDateFormat(DateTimeUtils.TIMESTAMP_FORMAT_STRING,
+            Locale.ROOT);
+    final DateFormat time =
+        new SimpleDateFormat(DateTimeUtils.TIME_FORMAT_STRING, Locale.ROOT);
+    final DateFormat date =
+        new SimpleDateFormat(DateTimeUtils.DATE_FORMAT_STRING, Locale.ROOT);
   }
 }
 

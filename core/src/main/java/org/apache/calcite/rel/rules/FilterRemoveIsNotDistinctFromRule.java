@@ -20,6 +20,7 @@ import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
@@ -27,6 +28,7 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.tools.RelBuilderFactory;
 
 /**
  * Planner rule that replaces {@code IS NOT DISTINCT FROM}
@@ -40,12 +42,18 @@ public final class FilterRemoveIsNotDistinctFromRule extends RelOptRule {
 
   /** The singleton. */
   public static final FilterRemoveIsNotDistinctFromRule INSTANCE =
-      new FilterRemoveIsNotDistinctFromRule();
+      new FilterRemoveIsNotDistinctFromRule(RelFactories.LOGICAL_BUILDER);
 
   //~ Constructors -----------------------------------------------------------
 
-  private FilterRemoveIsNotDistinctFromRule() {
-    super(operand(LogicalFilter.class, any()));
+  /**
+   * Creates a FilterRemoveIsNotDistinctFromRule.
+   *
+   * @param relBuilderFactory Builder for relational expressions
+   */
+  public FilterRemoveIsNotDistinctFromRule(
+      RelBuilderFactory relBuilderFactory) {
+    super(operand(LogicalFilter.class, any()), relBuilderFactory, null);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -69,9 +77,10 @@ public final class FilterRemoveIsNotDistinctFromRule extends RelOptRule {
         new RemoveIsNotDistinctFromRexShuttle(
             oldFilter.getCluster().getRexBuilder());
 
+    final RelFactories.FilterFactory factory =
+        RelFactories.DEFAULT_FILTER_FACTORY;
     RelNode newFilterRel =
-        RelOptUtil.createFilter(
-            oldFilter.getInput(),
+        factory.createFilter(oldFilter.getInput(),
             oldFilterCond.accept(rewriteShuttle));
 
     call.transformTo(newFilterRel);
@@ -85,7 +94,7 @@ public final class FilterRemoveIsNotDistinctFromRule extends RelOptRule {
   private class RemoveIsNotDistinctFromRexShuttle extends RexShuttle {
     RexBuilder rexBuilder;
 
-    public RemoveIsNotDistinctFromRexShuttle(
+    RemoveIsNotDistinctFromRexShuttle(
         RexBuilder rexBuilder) {
       this.rexBuilder = rexBuilder;
     }

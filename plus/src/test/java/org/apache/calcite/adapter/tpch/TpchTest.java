@@ -19,6 +19,7 @@ package org.apache.calcite.adapter.tpch;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.test.CalciteAssert;
+import org.apache.calcite.util.TestUtil;
 import org.apache.calcite.util.Util;
 
 import com.google.common.base.Function;
@@ -40,11 +41,8 @@ import static org.junit.Assert.assertThat;
  * if {@code -Dcalcite.test.slow} is specified on the command-line.
  * (See {@link org.apache.calcite.test.CalciteAssert#ENABLE_SLOW}.)</p> */
 public class TpchTest {
-  public static final String JAVA_VERSION =
-      System.getProperties().getProperty("java.version");
-
   public static final boolean ENABLE =
-      CalciteAssert.ENABLE_SLOW && JAVA_VERSION.compareTo("1.7") >= 0;
+      CalciteAssert.ENABLE_SLOW && TestUtil.getJavaMajorVersion() >= 7;
 
   private static String schema(String name, String scaleFactor) {
     return "     {\n"
@@ -777,6 +775,24 @@ public class TpchTest {
     with()
         .query("select * from tpch.orders")
         .returnsCount(1500000);
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1543">[CALCITE-1543]
+   * Correlated scalar sub-query with multiple aggregates gives
+   * AssertionError</a>. */
+  @Ignore("planning succeeds, but gives OutOfMemoryError during execution")
+  @Test public void testDecorrelateScalarAggregate() {
+    final String sql = "select sum(l_extendedprice)\n"
+        + "from lineitem, part\n"
+        + "where\n"
+        + "     p_partkey = l_partkey\n"
+        + "     and l_quantity > (\n"
+        + "       select avg(l_quantity)\n"
+        + "       from lineitem\n"
+        + "       where l_partkey = p_partkey\n"
+        + "    )\n";
+    with().query(sql).runs();
   }
 
   @Test public void testCustomer() {

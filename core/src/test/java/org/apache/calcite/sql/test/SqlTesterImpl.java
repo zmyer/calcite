@@ -24,13 +24,13 @@ import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.runtime.Utilities;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCollation;
-import org.apache.calcite.sql.SqlDialect;
 import org.apache.calcite.sql.SqlIntervalLiteral;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.SqlSelect;
+import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
@@ -39,6 +39,7 @@ import org.apache.calcite.sql.parser.SqlParserUtil;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.util.SqlShuttle;
 import org.apache.calcite.sql.validate.SqlConformance;
+import org.apache.calcite.sql.validate.SqlConformanceEnum;
 import org.apache.calcite.sql.validate.SqlMonotonicity;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorNamespace;
@@ -73,7 +74,7 @@ import static org.junit.Assert.fail;
  * Implementation of {@link org.apache.calcite.test.SqlValidatorTestCase.Tester}
  * that talks to a mock catalog.
  */
-public class SqlTesterImpl implements SqlTester {
+public class SqlTesterImpl implements SqlTester, AutoCloseable {
   protected final SqlTestFactory factory;
 
   public SqlTesterImpl(SqlTestFactory factory) {
@@ -87,7 +88,7 @@ public class SqlTesterImpl implements SqlTester {
   /**
    * {@inheritDoc}
    *
-   * This default implementation does nothing.
+   * <p>This default implementation does nothing.
    */
   public void close() {
     // no resources to release
@@ -290,16 +291,19 @@ public class SqlTesterImpl implements SqlTester {
 
   public SqlTesterImpl withConformance(SqlConformance conformance) {
     if (conformance == null) {
-      conformance = SqlConformance.DEFAULT;
+      conformance = SqlConformanceEnum.DEFAULT;
     }
-    return with("conformance", conformance);
+    return with("conformance", conformance)
+        .withConnectionFactory(
+            CalciteAssert.EMPTY_CONNECTION_FACTORY
+                .with("conformance", conformance));
   }
 
   public SqlTester withOperatorTable(SqlOperatorTable operatorTable) {
     return with("operatorTable", operatorTable);
   }
 
-  public SqlTester withConnectionFactory(
+  public SqlTesterImpl withConnectionFactory(
       CalciteAssert.ConnectionFactory connectionFactory) {
     return with("connectionFactory", connectionFactory);
   }
@@ -384,11 +388,7 @@ public class SqlTesterImpl implements SqlTester {
     for (String sql : buildQueries(expression)) {
       TypeChecker typeChecker =
           new SqlTests.StringTypeChecker(expectedType);
-      check(
-          sql,
-          typeChecker,
-          new Double(expectedResult),
-          delta);
+      check(sql, typeChecker, expectedResult, delta);
     }
   }
 
@@ -475,7 +475,7 @@ public class SqlTesterImpl implements SqlTester {
       String expectedRewrite) {
     SqlNode rewrittenNode = parseAndValidate(validator, query);
     String actualRewrite =
-        rewrittenNode.toSqlString(SqlDialect.DUMMY, false).getSql();
+        rewrittenNode.toSqlString(AnsiSqlDialect.DEFAULT, false).getSql();
     TestUtil.assertEqualsVerbose(expectedRewrite, Util.toLinux(actualRewrite));
   }
 

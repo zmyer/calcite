@@ -68,10 +68,14 @@ public final class FunctionExpression<F extends Function<?>>
     this(type, null, body, parameters);
   }
 
-  @Override public Expression accept(Visitor visitor) {
-    visitor = visitor.preVisit(this);
-    BlockStatement body = this.body.accept(visitor);
-    return visitor.visit(this, body);
+  @Override public Expression accept(Shuttle shuttle) {
+    shuttle = shuttle.preVisit(this);
+    BlockStatement body = this.body.accept(shuttle);
+    return shuttle.visit(this, body);
+  }
+
+  public <R> R accept(Visitor<R> visitor) {
+    return visitor.visit(this);
   }
 
   public Invokable compile() {
@@ -168,7 +172,8 @@ public final class FunctionExpression<F extends Function<?>>
         .begin(" {\n")
         .append("public ")
         .append(Types.className(resultType2))
-        .list(" " + methodName + "(", ", ", ") ", params)
+        .list(" " + methodName + "(",
+                ", ", ") ", params)
         .append(Blocks.toFunctionBlock(body));
 
     // Generate an intermediate bridge method if at least one parameter is
@@ -218,8 +223,8 @@ public final class FunctionExpression<F extends Function<?>>
 
   private Method getAbstractMethod() {
     if (type instanceof Class
-      && ((Class) type).isInterface()
-      && ((Class) type).getDeclaredMethods().length == 1) {
+        && ((Class) type).isInterface()
+        && ((Class) type).getDeclaredMethods().length == 1) {
       return ((Class) type).getDeclaredMethods()[0];
     }
     return null;

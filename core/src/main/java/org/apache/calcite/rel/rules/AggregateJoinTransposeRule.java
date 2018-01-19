@@ -29,6 +29,7 @@ import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.logical.LogicalAggregate;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
@@ -155,7 +156,7 @@ public class AggregateJoinTransposeRule extends RelOptRule {
 
     // Do the columns used by the join appear in the output of the aggregate?
     final ImmutableBitSet aggregateColumns = aggregate.getGroupSet();
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
+    final RelMetadataQuery mq = call.getMetadataQuery();
     final ImmutableBitSet keyColumns = keyColumns(aggregateColumns,
         mq.getPulledUpPredicates(join).pulledUpPredicates);
     final ImmutableBitSet joinColumns =
@@ -234,6 +235,8 @@ public class AggregateJoinTransposeRule extends RelOptRule {
                 ? Mappings.createIdentity(fieldCount)
                 : Mappings.createShiftMapping(fieldCount + offset, 0, offset,
                     fieldCount);
+        final int oldGroupKeyCount = aggregate.getGroupCount();
+        final int newGroupKeyCount = belowAggregateKey.cardinality();
         for (Ord<AggregateCall> aggCall : Ord.zip(aggregate.getAggCallList())) {
           final SqlAggFunction aggregation = aggCall.e.getAggregation();
           final SqlSplittableAggFunction splitter =
@@ -241,7 +244,9 @@ public class AggregateJoinTransposeRule extends RelOptRule {
                   aggregation.unwrap(SqlSplittableAggFunction.class));
           final AggregateCall call1;
           if (fieldSet.contains(ImmutableBitSet.of(aggCall.e.getArgList()))) {
-            call1 = splitter.split(aggCall.e, mapping);
+            final AggregateCall splitCall = splitter.split(aggCall.e, mapping);
+            call1 = splitCall.adaptTo(joinInput, splitCall.getArgList(),
+                splitCall.filterArg, oldGroupKeyCount, newGroupKeyCount);
           } else {
             call1 = splitter.other(rexBuilder.getTypeFactory(), aggCall.e);
           }
@@ -252,7 +257,7 @@ public class AggregateJoinTransposeRule extends RelOptRule {
           }
         }
         side.newInput = relBuilder.push(joinInput)
-            .aggregate(relBuilder.groupKey(belowAggregateKey, false, null),
+            .aggregate(relBuilder.groupKey(belowAggregateKey, null),
                 belowAggCalls)
             .build();
       }
@@ -306,39 +311,39 @@ public class AggregateJoinTransposeRule extends RelOptRule {
               leftSubTotal == null ? -1 : leftSubTotal,
               rightSubTotal == null ? -1 : rightSubTotal + newLeftWidth));
     }
-  b:
-    if (allColumnsInAggregate && newAggCalls.isEmpty()) {
-      // no need to aggregate
-    } else {
-      relBuilder.project(projects);
-      if (allColumnsInAggregate) {
-        // let's see if we can convert
-        List<RexNode> projects2 = new ArrayList<>();
-        for (int key : Mappings.apply(mapping, aggregate.getGroupSet())) {
-          projects2.add(relBuilder.field(key));
-        }
-        for (AggregateCall newAggCall : newAggCalls) {
-          final SqlSplittableAggFunction splitter =
-              newAggCall.getAggregation()
-                  .unwrap(SqlSplittableAggFunction.class);
-          if (splitter != null) {
-            projects2.add(
-                splitter.singleton(rexBuilder, relBuilder.peek().getRowType(),
-                    newAggCall));
-          }
-        }
-        if (projects2.size()
-            == aggregate.getGroupSet().cardinality() + newAggCalls.size()) {
-          // We successfully converted agg calls into projects.
-          relBuilder.project(projects2);
-          break b;
+
+    relBuilder.project(projects);
+
+    boolean aggConvertedToProjects = false;
+    if (allColumnsInAggregate) {
+      // let's see if we can convert aggregate into projects
+      List<RexNode> projects2 = new ArrayList<>();
+      for (int key : Mappings.apply(mapping, aggregate.getGroupSet())) {
+        projects2.add(relBuilder.field(key));
+      }
+      for (AggregateCall newAggCall : newAggCalls) {
+        final SqlSplittableAggFunction splitter =
+            newAggCall.getAggregation().unwrap(SqlSplittableAggFunction.class);
+        if (splitter != null) {
+          final RelDataType rowType = relBuilder.peek().getRowType();
+          projects2.add(splitter.singleton(rexBuilder, rowType, newAggCall));
         }
       }
+      if (projects2.size()
+          == aggregate.getGroupSet().cardinality() + newAggCalls.size()) {
+        // We successfully converted agg calls into projects.
+        relBuilder.project(projects2);
+        aggConvertedToProjects = true;
+      }
+    }
+
+    if (!aggConvertedToProjects) {
       relBuilder.aggregate(
           relBuilder.groupKey(Mappings.apply(mapping, aggregate.getGroupSet()),
-              aggregate.indicator, Mappings.apply2(mapping, aggregate.getGroupSets())),
+              Mappings.apply2(mapping, aggregate.getGroupSets())),
           newAggCalls);
     }
+
     call.transformTo(relBuilder.build());
   }
 
@@ -348,8 +353,8 @@ public class AggregateJoinTransposeRule extends RelOptRule {
   private static ImmutableBitSet keyColumns(ImmutableBitSet aggregateColumns,
       ImmutableList<RexNode> predicates) {
     SortedMap<Integer, BitSet> equivalence = new TreeMap<>();
-    for (RexNode pred : predicates) {
-      populateEquivalences(equivalence, pred);
+    for (RexNode predicate : predicates) {
+      populateEquivalences(equivalence, predicate);
     }
     ImmutableBitSet keyColumns = aggregateColumns;
     for (Integer aggregateColumn : aggregateColumns) {
@@ -390,8 +395,8 @@ public class AggregateJoinTransposeRule extends RelOptRule {
 
   /** Creates a {@link org.apache.calcite.sql.SqlSplittableAggFunction.Registry}
    * that is a view of a list. */
-  private static <E> SqlSplittableAggFunction.Registry<E>
-  registry(final List<E> list) {
+  private static <E> SqlSplittableAggFunction.Registry<E> registry(
+      final List<E> list) {
     return new SqlSplittableAggFunction.Registry<E>() {
       public int register(E e) {
         int i = list.indexOf(e);

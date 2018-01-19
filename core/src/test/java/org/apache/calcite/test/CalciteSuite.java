@@ -28,7 +28,9 @@ import org.apache.calcite.plan.volcano.TraitPropagationTest;
 import org.apache.calcite.plan.volcano.VolcanoPlannerTest;
 import org.apache.calcite.plan.volcano.VolcanoPlannerTraitTest;
 import org.apache.calcite.prepare.LookupOperatorOverloadsTest;
+import org.apache.calcite.profile.ProfilerTest;
 import org.apache.calcite.rel.RelCollationTest;
+import org.apache.calcite.rel.RelDistributionTest;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverterTest;
 import org.apache.calcite.rel.rules.DateRangeRulesTest;
 import org.apache.calcite.rex.RexBuilderTest;
@@ -38,6 +40,7 @@ import org.apache.calcite.runtime.EnumerablesTest;
 import org.apache.calcite.sql.SqlSetOptionOperatorTest;
 import org.apache.calcite.sql.parser.SqlParserTest;
 import org.apache.calcite.sql.parser.SqlUnParserTest;
+import org.apache.calcite.sql.parser.parserextensiontesting.ExtensionSqlParserTest;
 import org.apache.calcite.sql.test.SqlAdvisorTest;
 import org.apache.calcite.sql.test.SqlOperatorTest;
 import org.apache.calcite.sql.test.SqlPrettyWriterTest;
@@ -55,6 +58,7 @@ import org.apache.calcite.util.PartiallyOrderedSetTest;
 import org.apache.calcite.util.PermutationTestCase;
 import org.apache.calcite.util.PrecedenceClimbingParserTest;
 import org.apache.calcite.util.ReflectVisitorTest;
+import org.apache.calcite.util.SourceTest;
 import org.apache.calcite.util.UtilTest;
 import org.apache.calcite.util.graph.DirectedGraphTest;
 import org.apache.calcite.util.mapping.MappingTest;
@@ -83,6 +87,7 @@ import org.junit.runners.Suite;
     RelCollationTest.class,
     UtilTest.class,
     PrecedenceClimbingParserTest.class,
+    SourceTest.class,
     MappingTest.class,
     CalciteResourceTest.class,
     FilteratorTest.class,
@@ -96,6 +101,7 @@ import org.junit.runners.Suite;
     VolcanoPlannerTest.class,
     HepPlannerTest.class,
     TraitPropagationTest.class,
+    RelDistributionTest.class,
     RelWriterTest.class,
     RexProgramTest.class,
     SqlOperatorBindingTest.class,
@@ -112,9 +118,11 @@ import org.junit.runners.Suite;
     // medium tests (above 0.1s)
     SqlParserTest.class,
     SqlUnParserTest.class,
+    ExtensionSqlParserTest.class,
     SqlSetOptionOperatorTest.class,
     SqlPrettyWriterTest.class,
     SqlValidatorTest.class,
+    SqlValidatorMatchTest.class,
     SqlAdvisorTest.class,
     RelMetadataTest.class,
     DateRangeRulesTest.class,
@@ -135,9 +143,11 @@ import org.junit.runners.Suite;
     CollationConversionTest.class,
     TraitConversionTest.class,
     ComboRuleTest.class,
+    MutableRelTest.class,
 
     // slow tests (above 1s)
     UdfTest.class,
+    TableFunctionTest.class,
     PlannerTest.class,
     RelBuilderTest.class,
     PigRelBuilderTest.class,
@@ -147,10 +157,11 @@ import org.junit.runners.Suite;
     LinqFrontJdbcBackTest.class,
     JdbcFrontJdbcBackLinqMiddleTest.class,
     CalciteSqlOperatorTest.class,
+    ProfilerTest.class,
     LatticeTest.class,
     ReflectiveSchemaTest.class,
     JdbcTest.class,
-    QuidemTest.class,
+    CoreQuidemTest.class,
     CalciteRemoteDriverTest.class,
     StreamTest.class,
 
@@ -159,6 +170,7 @@ import org.junit.runners.Suite;
     RelMdColumnOriginsTest.class,
     MultiJdbcSchemaJoinTest.class,
     SqlLineTest.class,
+    CollectionTypeTest.class,
 
     // slow tests that don't break often
     SqlToRelConverterExtendedTest.class,
@@ -167,7 +179,7 @@ import org.junit.runners.Suite;
     // system tests and benchmarks (very slow, but usually only run if
     // '-Dcalcite.test.slow' is specified)
     FoodmartTest.class
-})
+    })
 public class CalciteSuite {
 }
 

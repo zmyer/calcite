@@ -31,16 +31,16 @@ adapters.
 
 ## Building from a source distribution
 
-Prerequisites are maven (3.2.1 or later)
-and Java (JDK 1.7 or later, 1.8 preferred) on your path.
+Prerequisites are maven (3.5.2 or later)
+and Java (JDK 8, 9 or 10) on your path.
 
 Unpack the source distribution `.tar.gz` or `.zip` file,
 `cd` to the root directory of the unpacked source,
 then build using maven:
 
 {% highlight bash %}
-$ tar xvfz calcite-1.9.0-source.tar.gz
-$ cd calcite-1.9.0
+$ tar xvfz calcite-1.15.0-source.tar.gz
+$ cd calcite-1.15.0
 $ mvn install
 {% endhighlight %}
 
@@ -49,8 +49,8 @@ tests.
 
 ## Building from git
 
-Prerequisites are git, maven (3.2.1 or later)
-and Java (JDK 1.7 or later, 1.8 preferred) on your path.
+Prerequisites are git, maven (3.5.2 or later)
+and Java (JDK 8 or later, 9 preferred) on your path.
 
 Create a local copy of the github repository,
 `cd` to its root directory,
@@ -396,15 +396,19 @@ Follow instructions [here](http://www.apache.org/dev/release-signing) to
 create a key pair. (On Mac OS X, I did `brew install gpg` and
 `gpg --gen-key`.)
 
-Add your public key to the `KEYS` file by following instructions in
-the `KEYS` file.
+Add your public key to the
+[`KEYS`](https://dist.apache.org/repos/dist/release/calcite/KEYS)
+file by following instructions in the `KEYS` file.
+(The `KEYS` file is not present in the git repo or in a release tar
+ball because that would be
+[redundant](https://issues.apache.org/jira/browse/CALCITE-1746).)
 
 ## Making a snapshot (for Calcite committers)
 
 Before you start:
 
 * Set up signing keys as described above.
-* Make sure you are using JDK 1.7 (not 1.8).
+* Make sure you are using JDK 8 (not 7, 9 or 10).
 * Make sure build and tests succeed with `-Dcalcite.test.db=hsqldb` (the default)
 
 {% highlight bash %}
@@ -425,12 +429,16 @@ When the dry-run has succeeded, change `install` to `deploy`.
 Before you start:
 
 * Set up signing keys as described above.
-* Make sure you are using JDK 1.7 (not 1.8).
+* Make sure you are using JDK 8 (not 7, 9 or 10).
 * Check that `README` and `site/_docs/howto.md` have the correct version number.
+* Check that `NOTICE` has the current copyright year.
 * Set `version.major` and `version.minor` in `pom.xml`.
 * Make sure build and tests succeed, including with `-P it,it-oracle`.
 * Make sure that `mvn javadoc:javadoc javadoc:test-javadoc` succeeds
   (i.e. gives no errors; warnings are OK)
+* Generate a report of vulnerabilities that occur among dependencies,
+  using `-Ppedantic`; if you like, run again with `-DfailBuildOnCVSS=8` to see
+  whether serious vulnerabilities exist.
 * Make sure that `mvn apache-rat:check` succeeds. (It will be run as part of
   the release, but it's better to trouble-shoot early.)
 * Decide the supported configurations of JDK, operating system and
@@ -444,7 +452,7 @@ Before you start:
   * `-Dcalcite.test.mongodb`
   * `-Dcalcite.test.splunk`
 * Trigger a
-  <a href="https://scan.coverity.com/projects/2966">Coverity scan</a>
+  <a href="https://scan.coverity.com/projects/julianhyde-calcite">Coverity scan</a>
   by merging the latest code into the `julianhyde/coverity_scan` branch,
   and when it completes, make sure that there are no important issues.
 * Add release notes to `site/_docs/history.md`. Include the commit history,
@@ -455,6 +463,21 @@ Before you start:
   every "resolved" JIRA case</a> (including duplicates) has
   a fix version assigned (most likely the version we are
   just about to release)
+
+Smoke-test `sqlline` with Spatial and Oracle function tables:
+
+{% highlight sql %}
+$ ./sqlline
+> !connect jdbc:calcite:fun=spatial,oracle "sa" ""
+SELECT NVL(ST_Is3D(ST_PointFromText('POINT(-71.064544 42.28787)')), TRUE);
++--------+
+| EXPR$0 |
++--------+
+| false  |
++--------+
+1 row selected (0.039 seconds)
+> !quit
+{% endhighlight %}
 
 Create a release branch named after the release, e.g. `branch-1.1`, and push it to Apache.
 
@@ -487,20 +510,23 @@ git clean -xn
 mvn clean
 
 # Do a dry run of the release:prepare step, which sets version numbers
+# (accept the default tag name of calcite-X.Y.Z)
 mvn -DdryRun=true -DskipTests -DreleaseVersion=X.Y.Z -DdevelopmentVersion=X.Y+1.Z-SNAPSHOT -Papache-release -Darguments="-Dgpg.passphrase=${GPG_PASSPHRASE}" release:prepare 2>&1 | tee /tmp/prepare-dry.log
 {% endhighlight %}
 
-Check the artifacts:
+Check the artifacts.
+Note that when performing the dry run `SNAPSHOT` will appear in any file or directory names given below.
+The version will be automatically changed when performing the release for real.
 
 * In the `target` directory should be these 8 files, among others:
   * apache-calcite-X.Y.Z-src.tar.gz
   * apache-calcite-X.Y.Z-src.tar.gz.asc
   * apache-calcite-X.Y.Z-src.tar.gz.md5
-  * apache-calcite-X.Y.Z-src.tar.gz.sha1
+  * apache-calcite-X.Y.Z-src.tar.gz.sha256
   * apache-calcite-X.Y.Z-src.zip
   * apache-calcite-X.Y.Z-src.zip.asc
   * apache-calcite-X.Y.Z-src.zip.md5
-  * apache-calcite-X.Y.Z-src.zip.sha1
+  * apache-calcite-X.Y.Z-src.zip.sha256
 * Note that the file names start `apache-calcite-`.
 * In the two source distros `.tar.gz` and `.zip` (currently there is
   no binary distro), check that all files belong to a directory called
@@ -509,6 +535,7 @@ Check the artifacts:
   `README`, `README.md`
   * Check that the version in `README` is correct
   * Check that the copyright year in `NOTICE` is correct
+* Make sure that there is no `KEYS` file in the source distros
 * In each .jar (for example
   `core/target/calcite-core-X.Y.Z.jar` and
   `mongodb/target/calcite-mongodb-X.Y.Z-sources.jar`), check
@@ -520,6 +547,7 @@ Check the artifacts:
 * Check PGP, per [this](https://httpd.apache.org/dev/verification.html)
 
 Now, remove the `-DdryRun` flag and run the release for real.
+For this step you'll have to add the [Apache servers](https://maven.apache.org/developers/committer-settings.html) to `~/.m2/settings.xml`.
 
 {% highlight bash %}
 # Prepare sets the version numbers, creates a tag, and pushes it to git
@@ -549,13 +577,6 @@ mkdir -p ~/dist/dev
 pushd ~/dist/dev
 svn co https://dist.apache.org/repos/dist/dev/calcite
 popd
-
-# Replace digest files with a single digest
-cd target
-for f in *.tar.gz *.zip; do
-  rm ${f}.md5 ${f}.sha1
-  gpg --print-mds ${f} > ${f}.mds
-done
 
 # Move the files into a directory
 mkdir ~/dist/dev/calcite/apache-calcite-X.Y.Z-rcN
@@ -779,16 +800,20 @@ svn ci
 The old releases will remain available in the
 [release archive](http://archive.apache.org/dist/calcite/).
 
+You should receive an email from the [Apache Reporter Service](https://reporter.apache.org/).
+Make sure to add the version number and date of the latest release at the site linked to in the email.
+
 Add a release note by copying
-[site/_posts/2015-11-10-release-1.5.0.md]({{ site.sourceRoot }}/site/_posts/2015-11-10-release-1.5.0.md),
-generate the javadoc and copy to `site/target/apidocs` and `site/target/testapidocs`,
-[publish the site](#publish-the-web-site),
+[site/_posts/2016-10-12-release-1.10.0.md]({{ site.sourceRoot }}/site/_posts/2016-10-12-release-1.10.0.md),
+generate the javadoc using `mvn site`, [publish the site](#publish-the-web-site),
 and check that it appears in the contents in [news](http://localhost:4000/news/).
+
+Merge the release branch back into `master` (e.g. `git merge --ff-only branch-X.Y`).
 
 After 24 hours, announce the release by sending an email to
 [announce@apache.org](https://mail-archives.apache.org/mod_mbox/www-announce/).
 You can use
-[the 1.6.0 announcement](https://mail-archives.apache.org/mod_mbox/www-announce/201601.mbox/%3C8DB4C1E5-B322-4A33-8E8F-9858FA6A1119%40apache.org%3E)
+[the 1.10.0 announcement](https://mail-archives.apache.org/mod_mbox/calcite-dev/201610.mbox/%3C11A13D1A-8364-4A34-A11B-A8E5EA57A740%40apache.org%3E)
 as a template. Be sure to include a brief description of the project.
 
 ## Publishing the web site (for Calcite committers)

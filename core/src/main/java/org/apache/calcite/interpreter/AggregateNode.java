@@ -41,11 +41,11 @@ import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Pair;
 
 import com.google.common.base.Supplier;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -63,9 +63,9 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
   private final ImmutableList<AccumulatorFactory> accumulatorFactories;
   private final DataContext dataContext;
 
-  public AggregateNode(Interpreter interpreter, Aggregate rel) {
-    super(interpreter, rel);
-    this.dataContext = interpreter.getDataContext();
+  public AggregateNode(Compiler compiler, Aggregate rel) {
+    super(compiler, rel);
+    this.dataContext = compiler.getDataContext();
 
     ImmutableBitSet union = ImmutableBitSet.of();
 
@@ -83,7 +83,7 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
 
     ImmutableList.Builder<AccumulatorFactory> builder = ImmutableList.builder();
     for (AggregateCall aggregateCall : rel.getAggCallList()) {
-      builder.add(getAccumulator(aggregateCall));
+      builder.add(getAccumulator(aggregateCall, false));
     }
     accumulatorFactories = builder.build();
   }
@@ -101,14 +101,25 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
     }
   }
 
-  private AccumulatorFactory getAccumulator(final AggregateCall call) {
+  private AccumulatorFactory getAccumulator(final AggregateCall call,
+      boolean ignoreFilter) {
+    if (call.filterArg >= 0 && !ignoreFilter) {
+      final AccumulatorFactory factory = getAccumulator(call, true);
+      return new AccumulatorFactory() {
+        public Accumulator get() {
+          final Accumulator accumulator = factory.get();
+          return new FilterAccumulator(accumulator, call.filterArg);
+        }
+      };
+    }
     if (call.getAggregation() == SqlStdOperatorTable.COUNT) {
       return new AccumulatorFactory() {
         public Accumulator get() {
           return new CountAccumulator(call);
         }
       };
-    } else if (call.getAggregation() == SqlStdOperatorTable.SUM) {
+    } else if (call.getAggregation() == SqlStdOperatorTable.SUM
+        || call.getAggregation() == SqlStdOperatorTable.SUM0) {
       final Class<?> clazz;
       switch (call.type.getSqlTypeName()) {
       case DOUBLE:
@@ -124,8 +135,13 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
         clazz = LongSum.class;
         break;
       }
-      return new UdaAccumulatorFactory(
-          AggregateFunctionImpl.create(clazz), call);
+      if (call.getAggregation() == SqlStdOperatorTable.SUM) {
+        return new UdaAccumulatorFactory(
+            AggregateFunctionImpl.create(clazz), call, true);
+      } else {
+        return new UdaAccumulatorFactory(
+            AggregateFunctionImpl.create(clazz), call, false);
+      }
     } else {
       final JavaTypeFactory typeFactory =
           (JavaTypeFactory) rel.getCluster().getTypeFactory();
@@ -137,7 +153,7 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
       final PhysType inputPhysType =
           PhysTypeImpl.of(typeFactory, rel.getInput().getRowType(),
               JavaRowFormat.ARRAY);
-      final RelDataTypeFactory.FieldInfoBuilder builder = typeFactory.builder();
+      final RelDataTypeFactory.Builder builder = typeFactory.builder();
       for (Expression expression : agg.state) {
         builder.add("a",
             typeFactory.createJavaType((Class) expression.getType()));
@@ -340,7 +356,7 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
   /**
    * A list of accumulators used during grouping.
    */
-  private class AccumulatorList extends ArrayList<Accumulator> {
+  private static class AccumulatorList extends ArrayList<Accumulator> {
     public void send(Row row) {
       for (Accumulator a : this) {
         a.send(row);
@@ -426,9 +442,10 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
     final AggregateFunctionImpl aggFunction;
     final int argOrdinal;
     public final Object instance;
+    public final boolean nullIfEmpty;
 
     UdaAccumulatorFactory(AggregateFunctionImpl aggFunction,
-        AggregateCall call) {
+        AggregateCall call, boolean nullIfEmpty) {
       this.aggFunction = aggFunction;
       if (call.getArgList().size() != 1) {
         throw new UnsupportedOperationException("in current implementation, "
@@ -439,11 +456,15 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
         instance = null;
       } else {
         try {
-          instance = aggFunction.declaringClass.newInstance();
-        } catch (InstantiationException | IllegalAccessException e) {
-          throw Throwables.propagate(e);
+          final Constructor<?> constructor =
+              aggFunction.declaringClass.getConstructor();
+          instance = constructor.newInstance();
+        } catch (InstantiationException | IllegalAccessException
+            | NoSuchMethodException | InvocationTargetException e) {
+          throw new RuntimeException(e);
         }
       }
+      this.nullIfEmpty = nullIfEmpty;
     }
 
     public Accumulator get() {
@@ -455,14 +476,16 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
   private static class UdaAccumulator implements Accumulator {
     private final UdaAccumulatorFactory factory;
     private Object value;
+    private boolean empty;
 
     UdaAccumulator(UdaAccumulatorFactory factory) {
       this.factory = factory;
       try {
         this.value = factory.aggFunction.initMethod.invoke(factory.instance);
       } catch (IllegalAccessException | InvocationTargetException e) {
-        throw Throwables.propagate(e);
+        throw new RuntimeException(e);
       }
+      this.empty = true;
     }
 
     public void send(Row row) {
@@ -475,17 +498,43 @@ public class AggregateNode extends AbstractSingleNode<Aggregate> {
       try {
         value = factory.aggFunction.addMethod.invoke(factory.instance, args);
       } catch (IllegalAccessException | InvocationTargetException e) {
-        throw Throwables.propagate(e);
+        throw new RuntimeException(e);
       }
+      empty = false;
     }
 
     public Object end() {
+      if (factory.nullIfEmpty && empty) {
+        return null;
+      }
       final Object[] args = {value};
       try {
         return factory.aggFunction.resultMethod.invoke(factory.instance, args);
       } catch (IllegalAccessException | InvocationTargetException e) {
-        throw Throwables.propagate(e);
+        throw new RuntimeException(e);
       }
+    }
+  }
+
+  /** Accumulator that applies a filter to another accumulator.
+   * The filter is a BOOLEAN field in the input row. */
+  private static class FilterAccumulator implements Accumulator {
+    private final Accumulator accumulator;
+    private final int filterArg;
+
+    FilterAccumulator(Accumulator accumulator, int filterArg) {
+      this.accumulator = accumulator;
+      this.filterArg = filterArg;
+    }
+
+    public void send(Row row) {
+      if (row.getValues()[filterArg] == Boolean.TRUE) {
+        accumulator.send(row);
+      }
+    }
+
+    public Object end() {
+      return accumulator.end();
     }
   }
 }

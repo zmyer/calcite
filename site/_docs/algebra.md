@@ -235,7 +235,7 @@ field #8.
 
 But through the builder API, you specify which field of which input.
 To reference "SAL", internal field #5,
-write `builder.field(2, 0, "SAL")`
+write `builder.field(2, 0, "SAL")`, `builder.field(2, "EMP", "SAL")`,
 or `builder.field(2, 0, 5)`.
 This means "the field #5 of input #0 of two inputs".
 (Why does it need to know that there are two inputs? Because they are stored on
@@ -244,7 +244,7 @@ If we did not tell the builder that were two inputs, it would not know how deep
 to go for input #0.)
 
 Similarly, to reference "DNAME", internal field #9 (8 + 1),
-write `builder.field(2, 1, "DNAME")`
+write `builder.field(2, 1, "DNAME")`, `builder.field(2, "DEPT", "DNAME")`,
 or `builder.field(2, 1, 1)`.
 
 ### API summary
@@ -274,12 +274,14 @@ return the `RelBuilder`.
 | `union(all [, n])` | Creates a [Union]({{ site.apiRoot }}/org/apache/calcite/rel/core/Union.html) of the `n` (default two) most recent relational expressions.
 | `intersect(all [, n])` | Creates an [Intersect]({{ site.apiRoot }}/org/apache/calcite/rel/core/Intersect.html) of the `n` (default two) most recent relational expressions.
 | `minus(all)` | Creates a [Minus]({{ site.apiRoot }}/org/apache/calcite/rel/core/Minus.html) of the two most recent relational expressions.
+| `match(pattern, strictStart,` `strictEnd, patterns, measures,` `after, subsets, allRows,` `partitionKeys, orderKeys,` `interval)` | Creates a [Match]({{ site.apiRoot }}/org/apache/calcite/rel/core/Match.html).
 
 Argument types:
 
-* `expr`  [RexNode]({{ site.apiRoot }}/org/apache/calcite/rex/RexNode.html)
+* `expr`, `interval` [RexNode]({{ site.apiRoot }}/org/apache/calcite/rex/RexNode.html)
 * `expr...` Array of [RexNode]({{ site.apiRoot }}/org/apache/calcite/rex/RexNode.html)
-* `exprList` Iterable of [RexNode]({{ site.apiRoot }}/org/apache/calcite/rex/RexNode.html)
+* `exprList`, `measureList`, `partitionKeys`, `orderKeys` Iterable of
+  [RexNode]({{ site.apiRoot }}/org/apache/calcite/rex/RexNode.html)
 * `fieldOrdinal` Ordinal of a field within its row (starting from 0)
 * `fieldName` Name of a field, unique within its row
 * `fieldName...` Array of String
@@ -291,18 +293,28 @@ Argument types:
 * `value...` Array of Object
 * `value` Object
 * `tupleList` Iterable of List of [RexLiteral]({{ site.apiRoot }}/org/apache/calcite/rex/RexLiteral.html)
-* `all` boolean
-* `distinct` boolean
+* `all`, `distinct`, `strictStart`, `strictEnd`, `allRows` boolean
 * `alias` String
+* `varHolder` [Holder]({{ site.apiRoot }}/org/apache/calcite/util/Holder.html) of [RexCorrelVariable]({{ site.apiRoot }}/org/apache/calcite/rex/RexCorrelVariable.html)
+* `patterns` Map whose key is String, value is [RexNode]({{ site.apiRoot }}/org/apache/calcite/rex/RexNode.html)
+* `subsets` Map whose key is String, value is a sorted set of String
 
 The builder methods perform various optimizations, including:
+
 * `project` returns its input if asked to project all columns in order
 * `filter` flattens the condition (so an `AND` and `OR` may have more than 2 children),
   simplifies (converting say `x = 1 AND TRUE` to `x = 1`)
 * If you apply `sort` then `limit`, the effect is as if you had called `sortLimit`
 
-### Stack methods
+There are annotation methods that add information to the top relational
+expression on the stack:
 
+| Method              | Description
+|:------------------- |:-----------
+| `as(alias)`         | Assigns a table alias to the top relational expression on the stack
+| `variable(varHolder)` | Creates a correlation variable referencing the top relational expression
+
+### Stack methods
 
 | Method              | Description
 |:------------------- |:-----------
@@ -327,6 +339,10 @@ added to the stack.
 | `field(fieldOrdinal)` | Reference, by ordinal, to a field of the top-most relational expression
 | `field(inputCount, inputOrdinal, fieldName)` | Reference, by name, to a field of the (`inputCount` - `inputOrdinal`)th relational expression
 | `field(inputCount, inputOrdinal, fieldOrdinal)` | Reference, by ordinal, to a field of the (`inputCount` - `inputOrdinal`)th relational expression
+| `field(inputCount, alias, fieldName)` | Reference, by table alias and field name, to a field at most `inputCount - 1` elements from the top of the stack
+| `field(alias, fieldName)` | Reference, by table alias and field name, to a field of the top-most relational expressions
+| `field(expr, fieldName)` | Reference, by name, to a field of a record-valued expression
+| `field(expr, fieldOrdinal)` | Reference, by ordinal, to a field of a record-valued expression
 | `fields(fieldOrdinalList)` | List of expressions referencing input fields by ordinal
 | `fields(mapping)` | List of expressions referencing input fields by a given mapping
 | `fields(collation)` | List of expressions, `exprList`, such that `sort(exprList)` would replicate collation
@@ -342,6 +358,18 @@ added to the stack.
 | `desc(expr)` | Changes sort direction to descending (only valid as an argument to `sort` or `sortLimit`)
 | `nullsFirst(expr)` | Changes sort order to nulls first (only valid as an argument to `sort` or `sortLimit`)
 | `nullsLast(expr)` | Changes sort order to nulls last (only valid as an argument to `sort` or `sortLimit`)
+
+#### Pattern methods
+
+The following methods return patterns for use in `match`.
+
+| Method              | Description
+|:------------------- |:-----------
+| `patternConcat(pattern...)` | Concatenates patterns
+| `patternAlter(pattern...)` | Alternates patterns
+| `patternQuantify(pattern, min, max)` | Quantifies a pattern
+| `patternPermute(pattern...)` | Permutes a pattern
+| `patternExclude(pattern)` | Excludes a pattern
 
 ### Group key methods
 
@@ -361,7 +389,7 @@ The following methods return an
 
 | Method              | Description
 |:------------------- |:-----------
-| `aggregateCall(op, distinct, filter, alias, expr...)`<br/>`aggregateCall(op, distinct, filter, alias, exprList)` | Creates a call to a given aggregate function, with an optional filter expression
+| `aggregateCall(op, distinct, approximate, filter, alias, expr...)`<br/>`aggregateCall(op, distinct, approximate, filter, alias, exprList)` | Creates a call to a given aggregate function, with an optional filter expression
 | `count(distinct, alias, expr...)` | Creates a call to the COUNT aggregate function
 | `countStar(alias)` | Creates a call to the COUNT(*) aggregate function
 | `sum(distinct, alias, expr)` | Creates a call to the SUM aggregate function

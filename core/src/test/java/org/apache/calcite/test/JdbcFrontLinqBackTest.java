@@ -31,7 +31,6 @@ import org.apache.calcite.schema.impl.AbstractSchema;
 import org.apache.calcite.schema.impl.AbstractTableQueryable;
 
 import com.google.common.base.Function;
-import com.google.common.base.Throwables;
 
 import org.junit.Ignore;
 import org.junit.Test;
@@ -107,10 +106,9 @@ public class JdbcFrontLinqBackTest {
             + "from \"hr\".\"emps\" as e\n"
             + "order by \"deptno\", \"name\" desc")
         .explainContains(""
-            + "EnumerableCalc(expr#0..1=[{inputs}], expr#2=[UPPER($t1)], UN=[$t2], deptno=[$t0], name=[$t1])\n"
-            + "  EnumerableSort(sort0=[$0], sort1=[$1], dir0=[ASC], dir1=[DESC])\n"
-            + "    EnumerableCalc(expr#0..4=[{inputs}], deptno=[$t1], name=[$t2])\n"
-            + "      EnumerableTableScan(table=[[hr, emps]])")
+            + "EnumerableCalc(expr#0..4=[{inputs}], expr#5=[UPPER($t2)], UN=[$t5], deptno=[$t1], name=[$t2])\n"
+            + "  EnumerableSort(sort0=[$1], sort1=[$2], dir0=[ASC], dir1=[DESC])\n"
+            + "    EnumerableTableScan(table=[[hr, emps]])")
         .returns("UN=THEODORE; deptno=10\n"
             + "UN=SEBASTIAN; deptno=10\n"
             + "UN=BILL; deptno=10\n"
@@ -162,7 +160,6 @@ public class JdbcFrontLinqBackTest {
   /**
    * Tests INTERSECT.
    */
-  @Ignore
   @Test public void testIntersect() {
     hr()
         .query("select substring(\"name\" from 1 for 1) as x\n"
@@ -263,7 +260,7 @@ public class JdbcFrontLinqBackTest {
               }
               return null;
             } catch (SQLException e) {
-              throw Throwables.propagate(e);
+              throw new RuntimeException(e);
             }
           }
         });
@@ -328,8 +325,6 @@ public class JdbcFrontLinqBackTest {
    * Method to be shared with {@code RemoteDriverTest}.
    *
    * @param initialData record to be presented in table
-   * @return java.sql.Connection
-   * @throws Exception
    */
   public static Connection makeConnection(
         final List<JdbcTest.Employee> initialData) throws Exception {

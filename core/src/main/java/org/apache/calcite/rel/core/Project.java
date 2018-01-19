@@ -45,7 +45,9 @@ import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Relational expression that computes a set of
@@ -79,7 +81,7 @@ public abstract class Project extends SingleRel {
     assert rowType != null;
     this.exps = ImmutableList.copyOf(projects);
     this.rowType = rowType;
-    assert isValid(Litmus.THROW);
+    assert isValid(Litmus.THROW, null);
   }
 
   @Deprecated // to be removed before 2.0
@@ -171,8 +173,8 @@ public abstract class Project extends SingleRel {
     return 1;
   }
 
-  public boolean isValid(Litmus litmus) {
-    if (!super.isValid(litmus)) {
+  public boolean isValid(Litmus litmus, Context context) {
+    if (!super.isValid(litmus, context)) {
       return litmus.fail(null);
     }
     if (!RexUtil.compatibleTypes(exps, getRowType(), litmus)) {
@@ -180,7 +182,7 @@ public abstract class Project extends SingleRel {
     }
     RexChecker checker =
         new RexChecker(
-            getInput().getRowType(), litmus);
+            getInput().getRowType(), context, litmus);
     for (RexNode exp : exps) {
       exp.accept(checker);
       if (checker.getFailureCount() > 0) {
@@ -271,6 +273,9 @@ public abstract class Project extends SingleRel {
    */
   public static Mappings.TargetMapping getMapping(int inputFieldCount,
       List<? extends RexNode> projects) {
+    if (inputFieldCount < projects.size()) {
+      return null; // surjection is not possible
+    }
     Mappings.TargetMapping mapping =
         Mappings.create(MappingType.INVERSE_SURJECTION,
             inputFieldCount, projects.size());
@@ -330,11 +335,16 @@ public abstract class Project extends SingleRel {
     if (fieldCount != inputFieldCount) {
       return null;
     }
-    Permutation permutation = new Permutation(fieldCount);
+    final Permutation permutation = new Permutation(fieldCount);
+    final Set<Integer> alreadyProjected = new HashSet<>(fieldCount);
     for (int i = 0; i < fieldCount; ++i) {
       final RexNode exp = projects.get(i);
       if (exp instanceof RexInputRef) {
-        permutation.set(i, ((RexInputRef) exp).getIndex());
+        final int index = ((RexInputRef) exp).getIndex();
+        if (!alreadyProjected.add(index)) {
+          return null;
+        }
+        permutation.set(i, index);
       } else {
         return null;
       }

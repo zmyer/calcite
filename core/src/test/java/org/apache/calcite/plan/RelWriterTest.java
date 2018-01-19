@@ -27,6 +27,7 @@ import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.schema.SchemaPlus;
+import org.apache.calcite.sql.SqlExplainFormat;
 import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -68,7 +69,8 @@ public class RelWriterTest {
       + "        \"op\": \"=\",\n"
       + "        \"operands\": [\n"
       + "          {\n"
-      + "            \"input\": 1\n"
+      + "            \"input\": 1,\n"
+      + "            \"name\": \"$1\"\n"
       + "          },\n"
       + "          10\n"
       + "        ]\n"
@@ -136,14 +138,13 @@ public class RelWriterTest {
                 final RelDataType bigIntType =
                     cluster.getTypeFactory().createSqlType(SqlTypeName.BIGINT);
                 LogicalAggregate aggregate =
-                    LogicalAggregate.create(filter, false,
-                        ImmutableBitSet.of(0), null,
+                    LogicalAggregate.create(filter, ImmutableBitSet.of(0), null,
                         ImmutableList.of(
                             AggregateCall.create(SqlStdOperatorTable.COUNT,
-                                true, ImmutableList.of(1), -1, bigIntType,
-                                "c"),
+                                true, false, ImmutableList.of(1), -1,
+                                bigIntType, "c"),
                             AggregateCall.create(SqlStdOperatorTable.COUNT,
-                                false, ImmutableList.<Integer>of(), -1,
+                                false, false, ImmutableList.<Integer>of(), -1,
                                 bigIntType, "d")));
                 aggregate.explain(writer);
                 return writer.asString();
@@ -172,10 +173,7 @@ public class RelWriterTest {
                 } catch (IOException e) {
                   throw new RuntimeException(e);
                 }
-                return RelOptUtil.dumpPlan(
-                    "",
-                    node,
-                    false,
+                return RelOptUtil.dumpPlan("", node, SqlExplainFormat.TEXT,
                     SqlExplainLevel.EXPPLAN_ATTRIBUTES);
               }
             });

@@ -18,13 +18,12 @@ package org.apache.calcite.rel.rules;
 
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
+import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.RelFactories;
-import org.apache.calcite.rel.type.RelDataTypeFactory;
-import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexOver;
 import org.apache.calcite.rex.RexUtil;
@@ -62,12 +61,10 @@ public class FilterProjectTransposeRule extends RelOptRule {
       Class<? extends Project> projectClass,
       boolean copyFilter, boolean copyProject,
       RelBuilderFactory relBuilderFactory) {
-    super(
+    this(
         operand(filterClass,
             operand(projectClass, any())),
-        relBuilderFactory, null);
-    this.copyFilter = copyFilter;
-    this.copyProject = copyProject;
+        copyFilter, copyProject, relBuilderFactory);
   }
 
   @Deprecated // to be removed before 2.0
@@ -79,6 +76,16 @@ public class FilterProjectTransposeRule extends RelOptRule {
     this(filterClass, projectClass, filterFactory == null,
         projectFactory == null,
         RelBuilder.proto(filterFactory, projectFactory));
+  }
+
+  protected FilterProjectTransposeRule(
+      RelOptRuleOperand operand,
+      boolean copyFilter,
+      boolean copyProject,
+      RelBuilderFactory relBuilderFactory) {
+    super(operand, relBuilderFactory, null);
+    this.copyFilter = copyFilter;
+    this.copyProject = copyProject;
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -108,20 +115,16 @@ public class FilterProjectTransposeRule extends RelOptRule {
     RexNode newCondition =
         RelOptUtil.pushPastProject(filter.getCondition(), project);
 
-    // Remove cast of BOOLEAN NOT NULL to BOOLEAN or vice versa. Filter accepts
-    // nullable and not-nullable conditions, but a CAST might get in the way of
-    // other rewrites.
-    final RelDataTypeFactory typeFactory = filter.getCluster().getTypeFactory();
-    if (RexUtil.isNullabilityCast(typeFactory, newCondition)) {
-      newCondition = ((RexCall) newCondition).getOperands().get(0);
-    }
-
     final RelBuilder relBuilder = call.builder();
-    RelNode newFilterRel =
-        copyFilter
-            ? filter.copy(filter.getTraitSet(), project.getInput(),
-                newCondition)
-            : relBuilder.push(project.getInput()).filter(newCondition).build();
+    RelNode newFilterRel;
+    if (copyFilter) {
+      newFilterRel = filter.copy(filter.getTraitSet(), project.getInput(),
+          RexUtil.removeNullabilityCast(relBuilder.getTypeFactory(),
+              newCondition));
+    } else {
+      newFilterRel =
+          relBuilder.push(project.getInput()).filter(newCondition).build();
+    }
 
     RelNode newProjRel =
         copyProject

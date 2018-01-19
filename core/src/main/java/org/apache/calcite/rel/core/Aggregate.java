@@ -31,6 +31,7 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.runtime.CalciteException;
+import org.apache.calcite.runtime.PredicateImpl;
 import org.apache.calcite.runtime.Resources;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlOperatorBinding;
@@ -73,21 +74,33 @@ public abstract class Aggregate extends SingleRel {
    * @see org.apache.calcite.util.Bug#CALCITE_461_FIXED
    */
   public static final Predicate<Aggregate> IS_SIMPLE =
-      new Predicate<Aggregate>() {
-        public boolean apply(Aggregate input) {
+      new PredicateImpl<Aggregate>() {
+        public boolean test(Aggregate input) {
           return input.getGroupType() == Group.SIMPLE;
         }
       };
 
+  public static final Predicate<Aggregate> NO_INDICATOR =
+      new PredicateImpl<Aggregate>() {
+        public boolean test(Aggregate input) {
+          return !input.indicator;
+        }
+      };
+
   public static final Predicate<Aggregate> IS_NOT_GRAND_TOTAL =
-      new Predicate<Aggregate>() {
-        public boolean apply(Aggregate input) {
+      new PredicateImpl<Aggregate>() {
+        public boolean test(Aggregate input) {
           return input.getGroupCount() > 0;
         }
       };
 
   //~ Instance fields --------------------------------------------------------
 
+  /** Whether there are indicator fields.
+   *
+   * <p>We strongly discourage the use indicator fields, because they cause the
+   * output row type of GROUPING SETS queries to be different from regular GROUP
+   * BY queries, and recommend that you set this field to {@code false}. */
   public final boolean indicator;
   protected final List<AggregateCall> aggCalls;
   protected final ImmutableBitSet groupSet;
@@ -117,8 +130,7 @@ public abstract class Aggregate extends SingleRel {
    * @param traits   Traits
    * @param child    Child
    * @param indicator Whether row type should include indicator fields to
-   *                 indicate which grouping set is active; must be true if
-   *                 aggregate is not simple
+   *                 indicate which grouping set is active; true is deprecated
    * @param groupSet Bit set of grouping fields
    * @param groupSets List of all grouping sets; null for just {@code groupSet}
    * @param aggCalls Collection of calls to aggregate functions
@@ -132,7 +144,7 @@ public abstract class Aggregate extends SingleRel {
       List<ImmutableBitSet> groupSets,
       List<AggregateCall> aggCalls) {
     super(cluster, traits, child);
-    this.indicator = indicator;
+    this.indicator = indicator; // true is allowed, but discouraged
     this.aggCalls = ImmutableList.copyOf(aggCalls);
     this.groupSet = Preconditions.checkNotNull(groupSet);
     if (groupSets == null) {
@@ -338,13 +350,16 @@ public abstract class Aggregate extends SingleRel {
       final List<AggregateCall> aggCalls) {
     final List<Integer> groupList = groupSet.asList();
     assert groupList.size() == groupSet.cardinality();
-    final RelDataTypeFactory.FieldInfoBuilder builder = typeFactory.builder();
+    final RelDataTypeFactory.Builder builder = typeFactory.builder();
     final List<RelDataTypeField> fieldList = inputRowType.getFieldList();
     final Set<String> containedNames = Sets.newHashSet();
     for (int groupKey : groupList) {
       final RelDataTypeField field = fieldList.get(groupKey);
       containedNames.add(field.getName());
       builder.add(field);
+      if (groupSets != null && !allContain(groupSets, groupKey)) {
+        builder.nullable(true);
+      }
     }
     if (indicator) {
       for (int groupKey : groupList) {
@@ -379,8 +394,18 @@ public abstract class Aggregate extends SingleRel {
     return builder.build();
   }
 
-  public boolean isValid(Litmus litmus) {
-    return super.isValid(litmus)
+  private static boolean allContain(List<ImmutableBitSet> groupSets,
+      int groupKey) {
+    for (ImmutableBitSet groupSet : groupSets) {
+      if (!groupSet.get(groupKey)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  public boolean isValid(Litmus litmus, Context context) {
+    return super.isValid(litmus, context)
         && litmus.check(Util.isDistinct(getRowType().getFieldNames()),
             "distinct field names: {}", getRowType());
   }

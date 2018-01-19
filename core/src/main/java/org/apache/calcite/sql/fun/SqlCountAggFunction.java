@@ -44,19 +44,12 @@ import java.util.List;
 public class SqlCountAggFunction extends SqlAggFunction {
   //~ Constructors -----------------------------------------------------------
 
-  public SqlCountAggFunction() {
-    super(
-        "COUNT",
-        null,
-        SqlKind.COUNT,
-        ReturnTypes.BIGINT,
-        null,
+  public SqlCountAggFunction(String name) {
+    super(name, null, SqlKind.COUNT, ReturnTypes.BIGINT, null,
         SqlValidator.STRICT
             ? OperandTypes.ANY
             : OperandTypes.ONE_OR_MORE,
-        SqlFunctionCategory.NUMERIC,
-        false,
-        false);
+        SqlFunctionCategory.NUMERIC, false, false);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -65,12 +58,14 @@ public class SqlCountAggFunction extends SqlAggFunction {
     return SqlSyntax.FUNCTION_STAR;
   }
 
+  @SuppressWarnings("deprecation")
   public List<RelDataType> getParameterTypes(RelDataTypeFactory typeFactory) {
     return ImmutableList.of(
         typeFactory.createTypeWithNullability(
             typeFactory.createSqlType(SqlTypeName.ANY), true));
   }
 
+  @SuppressWarnings("deprecation")
   public RelDataType getReturnType(RelDataTypeFactory typeFactory) {
     return typeFactory.createSqlType(SqlTypeName.BIGINT);
   }

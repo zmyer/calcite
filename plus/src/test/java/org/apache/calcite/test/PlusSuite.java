@@ -16,6 +16,7 @@
  */
 package org.apache.calcite.test;
 
+import org.apache.calcite.adapter.os.OsAdapterTest;
 import org.apache.calcite.adapter.tpcds.TpcdsTest;
 import org.apache.calcite.adapter.tpch.TpchTest;
 
@@ -27,9 +28,10 @@ import org.junit.runners.Suite;
  */
 @RunWith(Suite.class)
 @Suite.SuiteClasses({
+    OsAdapterTest.class,
     TpcdsTest.class,
     TpchTest.class
-})
+    })
 public class PlusSuite {
 }
 

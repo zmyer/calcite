@@ -64,11 +64,8 @@ public class SqlIntervalLiteral extends SqlLiteral {
 
   //~ Methods ----------------------------------------------------------------
 
-  public SqlNode clone(SqlParserPos pos) {
-    return new SqlIntervalLiteral(
-        (IntervalValue) value,
-        getTypeName(),
-        pos);
+  @Override public SqlIntervalLiteral clone(SqlParserPos pos) {
+    return new SqlIntervalLiteral((IntervalValue) value, getTypeName(), pos);
   }
 
   public void unparse(
@@ -84,6 +81,7 @@ public class SqlIntervalLiteral extends SqlLiteral {
     writer.keyword(interval.intervalQualifier.toString());
   }
 
+  @SuppressWarnings("deprecation")
   public int signum() {
     return ((IntervalValue) value).signum();
   }

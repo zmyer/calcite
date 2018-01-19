@@ -27,6 +27,7 @@ import java.nio.charset.CharsetEncoder;
 import java.nio.charset.IllegalCharsetNameException;
 import java.nio.charset.UnsupportedCharsetException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 
 import static org.apache.calcite.util.Static.RESOURCE;
@@ -35,7 +36,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * A string, optionally with {@link Charset character set} and
  * {@link SqlCollation}. It is immutable.
  */
-public class NlsString implements Comparable<NlsString> {
+public class NlsString implements Comparable<NlsString>, Cloneable {
   //~ Instance fields --------------------------------------------------------
 
   private final String charsetName;
@@ -46,7 +47,7 @@ public class NlsString implements Comparable<NlsString> {
   //~ Constructors -----------------------------------------------------------
 
   /**
-   * Creates a string in a specfied character set.
+   * Creates a string in a specified character set.
    *
    * @param value       String constant, must not be null
    * @param charsetName Name of the character set, may be null
@@ -63,7 +64,7 @@ public class NlsString implements Comparable<NlsString> {
       SqlCollation collation) {
     assert value != null;
     if (null != charsetName) {
-      charsetName = charsetName.toUpperCase();
+      charsetName = charsetName.toUpperCase(Locale.ROOT);
       this.charsetName = charsetName;
       String javaCharsetName =
           SqlUtil.translateCharacterSetName(charsetName);
@@ -90,7 +91,11 @@ public class NlsString implements Comparable<NlsString> {
   //~ Methods ----------------------------------------------------------------
 
   public Object clone() {
-    return new NlsString(value, charsetName, collation);
+    try {
+      return super.clone();
+    } catch (CloneNotSupportedException e) {
+      throw new AssertionError();
+    }
   }
 
   public int hashCode() {

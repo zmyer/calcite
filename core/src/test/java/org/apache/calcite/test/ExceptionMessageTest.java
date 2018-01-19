@@ -47,8 +47,8 @@ public class ExceptionMessageTest {
   @SuppressWarnings("UnusedDeclaration")
   public static class TestSchema {
     public Entry[] entries = {
-      new Entry(1, "name1"),
-      new Entry(2, "name2")
+        new Entry(1, "name1"),
+        new Entry(2, "name2")
     };
 
     public Iterable<Entry> badEntries = new Iterable<Entry>() {
@@ -141,7 +141,7 @@ public class ExceptionMessageTest {
       fail("Query should fail");
     } catch (SQLException e) {
       assertThat(e.getMessage(),
-          containsString("Table 'nonexistentTable' not found"));
+          containsString("Object 'nonexistentTable' not found"));
     }
   }
 }
